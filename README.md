@@ -6,6 +6,10 @@ A new Flutter project.
 
 This project is a starting point for a Flutter application.
 
+## Web Application
+
+You can access the web version of this application here: [https://SoluneNest.github.io/smart_window](https://SoluneNest.github.io/smart_window)
+
 A few resources to get you started if this is your first Flutter project:
 
 - [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
