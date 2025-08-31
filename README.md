@@ -34,7 +34,8 @@
 - Arduino IDE : ESP32 제어 코드 업로드
 - VSC : 전체적인 코드 작성
 - Python3 : 라즈베리파이 AI 모델 제어 코드 업로드
-- Google AI
+- Google Colab : AI 학습 코드 구현
+- Anaconda Prompt : AI 학습을 위한 Python 코드 구현
 - Tailscale : 외부 망에서 라즈베리파이 원격 연결을 위한 VPN
 - Flutter : 앱 설계 & 라즈베리파이와 ESP32 연동
 - EasyEDA : 회로 설계 프로그램
