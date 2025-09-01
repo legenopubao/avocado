@@ -574,11 +574,6 @@ class _SmartWindowHomePageState extends State<SmartWindowHomePage>
   @override
   Widget build(BuildContext context) {
     final airData = _airQualityData;
-    Map<String, dynamic> airStatus = {"status": "연결 안 됨", "color": Colors.grey};
-
-    if (airData != null && _errorCount < 3) {
-      airStatus = _evaluateAirQuality(airData);
-    }
 
     return Scaffold(
       body: Container(
