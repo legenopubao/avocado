@@ -1,6 +1,8 @@
 // lib/main.dart
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:flutter/foundation.dart';
 import 'services/communication_service.dart';
 import 'services/api.dart';
 import 'widgets/air_quality_card.dart';
@@ -9,7 +11,21 @@ import 'widgets/control_section.dart';
 import 'widgets/polling_status.dart';
 import 'widgets/connection_dialog.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  
+  // 웹 환경이 아닐 때만 .env 파일 로드
+  if (!kIsWeb) {
+    try {
+      await dotenv.load(fileName: ".env");
+      debugPrint('환경 변수 로드 완료');
+    } catch (e) {
+      debugPrint('환경 변수 로드 실패: $e');
+    }
+  } else {
+    debugPrint('웹 환경: 환경 변수 로드 건너뜀');
+  }
+  
   runApp(const SmartWindowApp());
 }
 
@@ -20,6 +36,7 @@ class SmartWindowApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Airocado',
+      debugShowCheckedModeBanner: false, // 디버그 배너 제거
       theme: ThemeData(
         primarySwatch: Colors.green,
         useMaterial3: true,
@@ -47,6 +64,7 @@ class _SmartWindowHomePageState extends State<SmartWindowHomePage>
   DateTime? _lastUpdated;
   bool _isPolling = true;
   bool _isLoading = false;
+  bool _isAutoMode = true; // 자동 창문 제어 모드
   int _errorCount = 0;
   String? _lastError;
   Timer? _pollingTimer;
@@ -73,6 +91,7 @@ class _SmartWindowHomePageState extends State<SmartWindowHomePage>
     ));
     
     _loadBaseUrlAndStart();
+    _initializeWeather(); // 날씨 서비스 초기화
   }
 
   @override
@@ -237,11 +256,11 @@ class _SmartWindowHomePageState extends State<SmartWindowHomePage>
 
   void _startPolling() {
     _pollingTimer?.cancel();
-    if (!_isPolling || (!_commService.httpConnected && !_commService.mqttConnected)) return;
-
-    _pollingTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      _fetchData();
-    });
+    _pollingTimer = Timer.periodic(
+      // 테스트 모드일 때는 2초, 실제 모드일 때는 5초
+      _commService.isTestMode ? const Duration(seconds: 2) : const Duration(seconds: 5),
+      (timer) => _fetchData(),
+    );
   }
 
   Future<void> _fetchData() async {
@@ -253,7 +272,10 @@ class _SmartWindowHomePageState extends State<SmartWindowHomePage>
       debugPrint('데이터 요청 시작');
       final data = await _commService.fetchData();
       if (data != null) {
-        debugPrint('데이터 수신 성공: ${data.temperature}°C, ${data.humidity}%, PM2.5 ${data.pm25}');
+        debugPrint('데이터 수신: ${data.toString()}');
+        debugPrint('불쾌지수: ${data.di.toStringAsFixed(1)}');
+        debugPrint('PM2.5: ${data.pm25.toStringAsFixed(1)}');
+        debugPrint('PM10: ${data.pm10.toStringAsFixed(1)}');
       }
     } catch (e) {
       debugPrint('데이터 요청 실패: $e');
@@ -268,22 +290,71 @@ class _SmartWindowHomePageState extends State<SmartWindowHomePage>
     }
   }
 
+  // 벌레 감지 제어
   Future<void> _controlBug(String command) async {
-    if (!_commService.httpConnected && !_commService.mqttConnected) return;
     try {
+      setState(() {
+        _isLoading = true;
+      });
+      
       final success = await _commService.controlBug(command);
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(success ? '성공' : '실패')),
-      );
+      
       if (success) {
-        await _fetchData();
+        // 테스트 모드일 때는 즉시 데이터 새로고침
+        if (_commService.isTestMode) {
+          await _fetchData();
+        }
+        
+        // 성공 메시지 표시
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('$command 명령이 성공적으로 처리되었습니다.'),
+            backgroundColor: Colors.green,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+        
+        // 창문 제어 명령인 경우 즉시 상태 업데이트
+        if (command == 'window_toggle') {
+          // 창문 상태 토글
+          if (_airQualityData != null) {
+            _airQualityData = AirQualityData(
+              di: _airQualityData!.di,
+              weather: _airQualityData!.weather,
+              pm25: _airQualityData!.pm25,
+              pm10: _airQualityData!.pm10,
+              bug: _airQualityData!.bug,
+              window: !_airQualityData!.window, // 창문 상태 토글
+              timestamp: DateTime.now(),
+            );
+            
+            // 상태 변경 확인을 위한 추가 디버그 출력
+            debugPrint('창문 상태 업데이트 완료: ${_airQualityData!.window ? "열림" : "닫힘"}');
+          }
+        }
+      } else {
+        // 실패 메시지 표시
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('제어 명령 처리에 실패했습니다.'),
+            backgroundColor: Colors.red,
+            duration: Duration(seconds: 2),
+          ),
+        );
       }
     } catch (e) {
-      if (!mounted) return;
+      debugPrint('벌레 감지 제어 오류: $e');
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('오류: $e')),
+        SnackBar(
+          content: Text('제어 오류: $e'),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 2),
+        ),
       );
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
     }
   }
 
@@ -571,6 +642,16 @@ class _SmartWindowHomePageState extends State<SmartWindowHomePage>
     );
   }
 
+  // 날씨 서비스 초기화
+  Future<void> _initializeWeather() async {
+    try {
+      await _commService.initializeWeather();
+      debugPrint('날씨 서비스 초기화 완료');
+    } catch (e) {
+      debugPrint('날씨 서비스 초기화 오류: $e');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final airData = _airQualityData;
@@ -604,9 +685,15 @@ class _SmartWindowHomePageState extends State<SmartWindowHomePage>
                         ControlSection(
                           isBugDetected: airData?.bug ?? false,
                           isWindowOpen: airData?.window ?? false,
+                          isAutoMode: _isAutoMode,
                           onBugDetect: () => _controlBug('bug_on'),
                           onBugRelease: () => _controlBug('bug_off'),
                           onWindowToggle: () => _controlBug('window_toggle'),
+                          onAutoModeToggle: () {
+                            setState(() {
+                              _isAutoMode = !_isAutoMode;
+                            });
+                          },
                         ),
                         const SizedBox(height: 24),
                         PollingStatus(
@@ -627,6 +714,66 @@ class _SmartWindowHomePageState extends State<SmartWindowHomePage>
                           },
                         ),
                         const SizedBox(height: 20),
+                        
+                        // 테스트 모드 토글
+                        Container(
+                          padding: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(
+                            color: Colors.orange.withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: Colors.orange.withValues(alpha: 0.3),
+                              width: 1,
+                            ),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(
+                                Icons.science,
+                                color: Colors.orange,
+                                size: 20,
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      "테스트 모드",
+                                      style: TextStyle(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.w600,
+                                        color: Colors.grey[800],
+                                      ),
+                                    ),
+                                    Text(
+                                      _commService.isTestMode 
+                                        ? "ESP32 연결 없이 더미 데이터로 테스트 중"
+                                        : "실제 ESP32 데이터 사용",
+                                      style: TextStyle(
+                                        color: Colors.grey[600],
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              Switch(
+                                value: _commService.isTestMode,
+                                onChanged: (value) {
+                                  setState(() {
+                                    _commService.setTestMode(value);
+                                    if (value) {
+                                      // 테스트 모드 활성화 시 즉시 데이터 가져오기
+                                      _fetchData();
+                                    }
+                                  });
+                                },
+                                activeThumbColor: Colors.orange,
+                              ),
+                            ],
+                          ),
+                        ),
                       ],
                     ),
                   ),

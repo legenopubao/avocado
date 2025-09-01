@@ -106,7 +106,7 @@ class PollingStatus extends StatelessWidget {
                   child: Text(
                     '오류 $errorCount회',
                     style: const TextStyle(
-                      color: Color(0xFFFF5722),
+                      color: Colors.white,
                       fontSize: 12,
                       fontWeight: FontWeight.w500,
                     ),
@@ -129,7 +129,7 @@ class PollingStatus extends StatelessWidget {
                 children: [
                   const Icon(
                     Icons.error_outline,
-                    color: Color(0xFFFF5722),
+                    color: Colors.white,
                     size: 16,
                   ),
                   const SizedBox(width: 8),
@@ -137,7 +137,7 @@ class PollingStatus extends StatelessWidget {
                     child: Text(
                       lastError!,
                       style: const TextStyle(
-                        color: Color(0xFFFF5722),
+                        color: Colors.white,
                         fontSize: 12,
                       ),
                     ),

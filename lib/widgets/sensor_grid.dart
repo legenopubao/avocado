@@ -18,35 +18,17 @@ class SensorGrid extends StatelessWidget {
       children: [
         _buildSensorCard(
           Icons.thermostat,
-          "온도 (SHT31)",
-          "${airData.temperature.toStringAsFixed(1)}°C",
+          "불쾌지수 (DI)",
+          "${airData.di.toStringAsFixed(1)}",
           const LinearGradient(
             colors: [Color(0xFFFF5722), Color(0xFFFF7043)],
           ),
         ),
         _buildSensorCard(
-          Icons.water_drop,
-          "습도 (SHT31)",
-          "${airData.humidity.toStringAsFixed(1)}%",
-          const LinearGradient(
-            colors: [Color(0xFF2196F3), Color(0xFF42A5F5)],
-          ),
-        ),
-        _buildSensorCard(
-          Icons.cloud,
-          "CO2",
-          "${airData.co2.toStringAsFixed(1)} ppm",
-          const LinearGradient(
-            colors: [Color(0xFF4CAF50), Color(0xFF66BB6A)],
-          ),
-        ),
-        _buildSensorCard(
-          Icons.air,
-          "TVOC",
-          "${airData.tvoc.toStringAsFixed(1)} ppb",
-          const LinearGradient(
-            colors: [Color(0xFF9C27B0), Color(0xFFBA68C8)],
-          ),
+          _getWeatherIcon(airData.weather),
+          "날씨",
+          airData.weather == '날씨 OFF' ? '위치 권한 없음' : airData.weather,
+          _getWeatherGradient(airData.weather),
         ),
         _buildSensorCard(
           Icons.blur_on,
@@ -77,13 +59,13 @@ class SensorGrid extends StatelessWidget {
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.1),
+            color: Colors.black.withValues(alpha: 0.1),
             blurRadius: isHighlighted ? 15 : 10,
             offset: const Offset(0, 5),
           ),
           if (isHighlighted)
             BoxShadow(
-              color: gradient.colors.first.withOpacity(0.3),
+              color: gradient.colors.first.withValues(alpha: 0.3),
               blurRadius: 20,
               offset: const Offset(0, 8),
             ),
@@ -132,7 +114,7 @@ class SensorGrid extends StatelessWidget {
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.2),
+                  color: Colors.white.withValues(alpha: 0.2),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: const Text(
@@ -148,5 +130,68 @@ class SensorGrid extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  // 날씨 상태에 따른 아이콘 반환
+  IconData _getWeatherIcon(String weather) {
+    switch (weather) {
+      case '맑음':
+        return Icons.wb_sunny;
+      case '비':
+        return Icons.umbrella;
+      case '눈':
+        return Icons.ac_unit;
+      case '흐림':
+        return Icons.cloud;
+      case '구름':
+        return Icons.cloud;
+      case '천둥번개':
+        return Icons.thunderstorm;
+      case '안개':
+        return Icons.cloud;
+      case '날씨 OFF':
+        return Icons.location_off;
+      default:
+        return Icons.cloud;
+    }
+  }
+  
+  // 날씨 상태에 따른 그라데이션 반환
+  LinearGradient _getWeatherGradient(String weather) {
+    switch (weather) {
+      case '맑음':
+        return const LinearGradient(
+          colors: [Color(0xFFFF9800), Color(0xFFFFB74D)],
+        );
+      case '비':
+        return const LinearGradient(
+          colors: [Color(0xFF2196F3), Color(0xFF42A5F5)],
+        );
+      case '눈':
+        return const LinearGradient(
+          colors: [Color(0xFFE3F2FD), Color(0xFFBBDEFB)],
+        );
+      case '흐림':
+      case '구름':
+        return const LinearGradient(
+          colors: [Color(0xFF9E9E9E), Color(0xFFBDBDBD)],
+        );
+      case '천둥번개':
+        return const LinearGradient(
+          colors: [Color(0xFF673AB7), Color(0xFF9C27B0)],
+        );
+      case '안개':
+        return const LinearGradient(
+          colors: [Color(0xFF607D8B), Color(0xFF90A4AE)],
+        );
+      case '날씨 OFF':
+        return const LinearGradient(
+          colors: [Color(0xFFF44336), Color(0xFFE57373)],
+        );
+      default:
+        return const LinearGradient(
+          colors: [Color(0xFF4CAF50), Color(0xFF66BB6A)],
+        );
+    }
   }
 }

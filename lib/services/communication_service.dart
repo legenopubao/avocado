@@ -4,10 +4,12 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'api.dart';
 import 'mqtt_service.dart';
+import 'weather_service.dart';
 
 class CommunicationService {
   final ApiClient _apiClient = ApiClient();
   final MqttService _mqttService = MqttService();
+  final WeatherService _weatherService = WeatherService();
   
   bool _httpConnected = false;
   bool _mqttConnected = false;
@@ -98,6 +100,40 @@ class CommunicationService {
     }
   }
   
+  // 테스트 모드 설정
+  void setTestMode(bool enabled) {
+    _apiClient.setTestMode(enabled);
+    if (enabled) {
+      _httpConnected = true;
+      _httpStatus = '테스트 모드';
+      debugPrint('테스트 모드 활성화: 더미 데이터 사용');
+    } else {
+      _httpStatus = '연결되지 않음';
+      debugPrint('테스트 모드 비활성화');
+    }
+  }
+  
+  bool get isTestMode => _apiClient.isTestMode;
+  
+  // 날씨 관련 getter
+  bool get isWeatherEnabled => _weatherService.isWeatherEnabled;
+  String get currentWeather => _weatherService.currentWeather;
+  String get currentLocation => _weatherService.currentLocation;
+  double get currentTemperature => _weatherService.currentTemperature;
+  double get currentHumidity => _weatherService.currentHumidity;
+  
+  // 날씨 기능 초기화
+  Future<void> initializeWeather() async {
+    await _weatherService.initializeWeather();
+    _statusController.add('날씨 서비스: ${_weatherService.isWeatherEnabled ? "활성화" : "비활성화"}');
+  }
+  
+  // 날씨 기능 비활성화
+  void disableWeather() {
+    _weatherService.disableWeather();
+    _statusController.add('날씨 서비스 비활성화');
+  }
+  
   // MQTT 설정
   Future<bool> setMqttConfig() async {
     return await _connectMqtt();
@@ -159,6 +195,25 @@ class CommunicationService {
   // 벌레 감지 제어 (HTTP 우선, MQTT 백업)
   Future<bool> controlBug(String command) async {
     try {
+      // 테스트 모드일 때는 더미 응답 시뮬레이션
+      if (_apiClient.isTestMode) {
+        debugPrint('테스트 모드: 제어 명령 "$command" 시뮬레이션');
+        _statusController.add('테스트 모드: $command 명령 처리됨');
+        
+        // 창문 제어 명령인 경우 상태 변경 알림
+        if (command == 'window_toggle') {
+          _statusController.add('테스트 모드: 창문 상태 변경됨');
+          debugPrint('테스트 모드: 창문 제어 명령 처리됨');
+        }
+        
+        // 잠시 후 상태 업데이트 (실제 응답 시뮬레이션)
+        Future.delayed(const Duration(milliseconds: 500), () {
+          _statusController.add('테스트 모드: $command 명령 완료');
+        });
+        
+        return true;
+      }
+      
       // HTTP가 연결되어 있으면 HTTP 사용
       if (_httpConnected) {
         final success = await _apiClient.controlBug(command);

@@ -103,18 +103,6 @@ class ConnectionDialog extends StatelessWidget {
     );
   }
 
-  Widget _buildIconContainer(IconData icon) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.blue.withValues(alpha:0.3),
-        shape: BoxShape.circle,
-        border: Border.all(color: Colors.white, width: 2),
-      ),
-      child: Icon(icon, size: 48, color: Colors.white),
-    );
-  }
-
   Widget _buildInfoContainer() {
     return Container(
       padding: const EdgeInsets.all(16),

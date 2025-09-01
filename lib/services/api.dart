@@ -2,26 +2,22 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart'; // Added for Colors and Icons
+import 'dart:math'; // Added for Random
 
 // API 응답 데이터 모델
 class AirQualityData {
-  final double temperature;
-  final double humidity;
-  final double co2;
-  final double tvoc;
+  final double di; // 불쾌지수 (Discomfort Index)
+  final String weather; // 날씨 정보 (맑음, 비, 눈, 흐림 등)
   final double pm25;
   final double pm10;
   final bool bug; // 벌레 감지 상태
   final bool window; // 창문 상태 (true: 열림, false: 닫힘)
   final DateTime timestamp;
-  
+
   AirQualityData({
-    required this.temperature,
-    required this.humidity,
-    this.co2 = 400.0, // 기본값: 실외 CO2 농도
-    this.tvoc = 0.0,  // 기본값: 0 ppb
+    required this.di,
+    this.weather = '맑음', // 기본값: 맑음
     required this.pm25,
     required this.pm10,
     this.bug = false, // 기본값: 벌레 없음
@@ -30,56 +26,46 @@ class AirQualityData {
   }) : timestamp = timestamp ?? DateTime.now();
   
   factory AirQualityData.fromJson(Map<String, dynamic> json) {
-    try {
-      // 필수 필드 확인
-      final requiredFields = ['temp', 'hum', 'pm25', 'pm10'];
-      for (final field in requiredFields) {
-        if (!json.containsKey(field)) {
-          throw FormatException('필수 필드가 누락되었습니다: $field');
-        }
+    // 필수 필드 확인
+    final requiredFields = ['di', 'pm25', 'pm10'];
+    for (final field in requiredFields) {
+      if (!json.containsKey(field)) {
+        throw FormatException('필수 필드가 누락되었습니다: $field');
       }
-      
-      // 데이터 타입 검사 및 변환
-      final temp = _parseNumber(json['temp']);
-      final hum = _parseNumber(json['hum']);
-      final co2 = json.containsKey('co2') ? _parseNumber(json['co2']) : 400.0;
-      final tvoc = json.containsKey('tvoc') ? _parseNumber(json['tvoc']) : 0.0;
-      final pm25 = _parseNumber(json['pm25']);
-      final pm10 = _parseNumber(json['pm10']);
-      final bug = json.containsKey('bug') ? _parseBool(json['bug']) : false;
-      final window = json.containsKey('window') ? _parseBool(json['window']) : false;
-      
-      // timestamp 처리 (선택적)
-      DateTime? timestamp;
-      if (json.containsKey('timestamp')) {
-        try {
-          if (json['timestamp'] is String) {
-            timestamp = DateTime.parse(json['timestamp']);
-          } else if (json['timestamp'] is int) {
-            timestamp = DateTime.fromMillisecondsSinceEpoch(json['timestamp']);
-          }
-        } catch (e) {
-          debugPrint('timestamp 파싱 오류: $e');
-          // timestamp 파싱 실패 시 null로 설정하여 기본값 사용
-        }
-      }
-      
-      return AirQualityData(
-        temperature: temp,
-        humidity: hum,
-        co2: co2,
-        tvoc: tvoc,
-        pm25: pm25,
-        pm10: pm10,
-        bug: bug,
-        window: window,
-        timestamp: timestamp,
-      );
-    } catch (e) {
-      debugPrint('JSON 파싱 오류: $e');
-      debugPrint('JSON 데이터: $json');
-      rethrow;
     }
+
+    // 데이터 타입 검사 및 변환
+    final di = _parseNumber(json['di']);
+    final weather = json.containsKey('weather') ? json['weather'] as String : '맑음';
+    final pm25 = _parseNumber(json['pm25']);
+    final pm10 = _parseNumber(json['pm10']);
+    final bug = json.containsKey('bug') ? _parseBool(json['bug']) : false;
+    final window = json.containsKey('window') ? _parseBool(json['window']) : false;
+
+    // timestamp 처리 (선택적)
+    DateTime? timestamp;
+    if (json.containsKey('timestamp')) {
+      try {
+        if (json['timestamp'] is String) {
+          timestamp = DateTime.parse(json['timestamp']);
+        } else if (json['timestamp'] is int) {
+          timestamp = DateTime.fromMillisecondsSinceEpoch(json['timestamp']);
+        }
+      } catch (e) {
+        debugPrint('timestamp 파싱 오류: $e');
+        // timestamp 파싱 실패 시 null로 설정하여 기본값 사용
+      }
+    }
+
+    return AirQualityData(
+      di: di,
+      weather: weather,
+      pm25: pm25,
+      pm10: pm10,
+      bug: bug,
+      window: window,
+      timestamp: timestamp,
+    );
   }
   
   static double _parseNumber(dynamic value) {
@@ -130,32 +116,20 @@ class AirQualityData {
       pm10Score = 3;
     }
     
-    // 온도 기준 (18-26도가 적정)
-    int tempScore;
-    if (temperature >= 18 && temperature <= 26) {
-      tempScore = 0;
-    } else if (temperature >= 16 && temperature <= 28) {
-      tempScore = 1;
-    } else if (temperature >= 14 && temperature <= 30) {
-      tempScore = 2;
+    // 불쾌지수 기준 (DI 기준)
+    int diScore;
+    if (di < 70) {
+      diScore = 0; // 쾌적
+    } else if (di < 76) {
+      diScore = 1; // 보통
+    } else if (di < 80) {
+      diScore = 2; // 약간 불쾌
     } else {
-      tempScore = 3;
+      diScore = 3; // 불쾌
     }
     
-    // 습도 기준 (40-60%가 적정)
-    int humScore;
-    if (humidity >= 40 && humidity <= 60) {
-      humScore = 0;
-    } else if (humidity >= 30 && humidity <= 70) {
-      humScore = 1;
-    } else if (humidity >= 20 && humidity <= 80) {
-      humScore = 2;
-    } else {
-      humScore = 3;
-    }
-    
-    // 종합 점수 (PM2.5 40%, PM10 30%, 온도 20%, 습도 10%)
-    final totalScore = (pm25Score * 0.4 + pm10Score * 0.3 + tempScore * 0.2 + humScore * 0.1);
+    // 종합 점수 (PM2.5 40%, PM10 30%, 불쾌지수 30%)
+    final totalScore = (pm25Score * 0.4 + pm10Score * 0.3 + diScore * 0.3);
     
     if (totalScore < 0.5) {
       return {
@@ -188,12 +162,70 @@ class AirQualityData {
     }
   }
   
+  // 불쾌지수 상태 설명
+  Map<String, dynamic> getDiscomfortStatus() {
+    if (di < 70) {
+      return {
+        "status": "쾌적",
+        "message": "매우 쾌적한 환경입니다",
+        "color": Colors.green,
+        "icon": Icons.sentiment_very_satisfied,
+      };
+    } else if (di < 76) {
+      return {
+        "status": "보통",
+        "message": "적당한 환경입니다",
+        "color": Colors.blue,
+        "icon": Icons.sentiment_satisfied,
+      };
+    } else if (di < 80) {
+      return {
+        "status": "약간 불쾌",
+        "message": "약간 불쾌한 환경입니다",
+        "color": Colors.orange,
+        "icon": Icons.sentiment_dissatisfied,
+      };
+    } else if (di < 85) {
+      return {
+        "status": "불쾌",
+        "message": "불쾌한 환경입니다",
+        "color": Colors.red,
+        "icon": Icons.sentiment_very_dissatisfied,
+      };
+    } else {
+      return {
+        "status": "매우 불쾌",
+        "message": "매우 불쾌한 환경입니다",
+        "color": Colors.purple,
+        "icon": Icons.sentiment_very_dissatisfied,
+      };
+    }
+  }
+  
+  // 자동 창문 제어 로직 (팀원 로직)
+  String getAutoWindowControl() {
+    // 벌레 감지 시 닫기
+    if (bug) {
+      return "닫기";
+    }
+    // 미세먼지 나쁨 시 닫기
+    else if (pm25 > 35 || pm10 > 80) {
+      return "닫기";
+    }
+    // 불쾌지수 76 이하(쾌적) 시 닫기
+    else if (di < 76) {
+      return "닫기";
+    }
+    // 그 외의 경우 열기
+    else {
+      return "열기";
+    }
+  }
+
   @override
   String toString() {
-    return 'AirQualityData(temp: ${temperature.toStringAsFixed(1)}°C, '
-           'hum: ${humidity.toStringAsFixed(1)}%, '
-           'CO2: ${co2.toStringAsFixed(1)}ppm, '
-           'TVOC: ${tvoc.toStringAsFixed(1)}ppb, '
+    return 'AirQualityData(DI: ${di.toStringAsFixed(1)}, '
+           '날씨: $weather, '
            'PM2.5: ${pm25.toStringAsFixed(1)}μg/m³, '
            'PM10: ${pm10.toStringAsFixed(1)}μg/m³, '
            'bug: $bug, '
@@ -214,14 +246,39 @@ class ApiException implements Exception {
 // API 클라이언트
 class ApiClient {
   String _baseUrl = '';
-
+  bool _isTestMode = false; // 테스트 모드 플래그
+  
+  // 테스트 모드용 상태 변수들
+  bool _testBugDetected = false;
+  bool _testWindowOpen = false;
+  
   String get baseUrl => _baseUrl;
+  //불필요하게 getter와 setter로 변수를 감싸고 있다고 생각될 수 있지만 이후의 로직 확장성을 위해 이렇게 둠.
   set baseUrl(String value) => _baseUrl = value;
+  
+  // 테스트 모드 설정
+  void setTestMode(bool enabled) {
+    _isTestMode = enabled;
+    if (enabled) {
+      // 테스트 모드 초기화
+      _testBugDetected = false;
+      _testWindowOpen = false;
+    }
+    debugPrint('테스트 모드: ${enabled ? "활성화" : "비활성화"}');
+  }
+  
+  bool get isTestMode => _isTestMode;
 
   Future<AirQualityData> getData([String? customUrl]) async {
+    // 테스트 모드일 때 더미 데이터 반환
+    if (_isTestMode) {
+      debugPrint('테스트 모드: 더미 데이터 반환');
+      return _generateTestData();
+    }
+    
     final url = customUrl ?? _baseUrl;
     if (url.isEmpty) {
-      throw ApiException('URL이 설정되지 않았습니다');
+      throw ApiException('URL이 설정되지 않았습니다.');
     }
 
     try {
@@ -255,8 +312,33 @@ class ApiClient {
   }
 
   Future<bool> controlBug(String command) async {
-    if (_baseUrl.isEmpty) {
-      throw ApiException('URL이 설정되지 않았습니다');
+    // 테스트 모드일 때는 상태 업데이트 후 성공 반환
+    if (_isTestMode) {
+      debugPrint('테스트 모드: 제어 명령 "$command" 처리');
+      
+      switch (command) {
+        case 'bug_on':
+          _testBugDetected = true;
+          debugPrint('테스트 모드: 벌레 감지 ON');
+          break;
+        case 'bug_off':
+          _testBugDetected = false;
+          debugPrint('테스트 모드: 벌레 감지 OFF');
+          break;
+        case 'window_toggle':
+          _testWindowOpen = !_testWindowOpen;
+          debugPrint('테스트 모드: 창문 상태 변경 - ${_testWindowOpen ? "열림" : "닫힘"}');
+          break;
+        default:
+          debugPrint('테스트 모드: 알 수 없는 명령 "$command"');
+      }
+      
+      return true;
+    }
+    
+    final url = _baseUrl;
+    if (url.isEmpty) {
+      throw ApiException('URL이 설정되지 않았습니다.');
     }
 
     try {
@@ -287,5 +369,37 @@ class ApiClient {
       if (e is ApiException) rethrow;
       throw ApiException('제어 오류: $e');
     }
+  }
+
+  // 테스트용 더미 데이터 생성
+  AirQualityData _generateTestData() {
+    // 랜덤하게 변하는 테스트 데이터 생성
+    final random = Random();
+    
+    // 불쾌지수: 65~85 범위 (쾌적~불쾌)
+    final di = 65.0 + random.nextDouble() * 20.0;
+    
+    // PM2.5: 10~60 범위 (좋음~나쁨)
+    final pm25 = 10.0 + random.nextDouble() * 50.0;
+    
+    // PM10: 20~120 범위 (좋음~매우나쁨)
+    final pm10 = 20.0 + random.nextDouble() * 100.0;
+    
+    // CO2: 400~1000 범위 (실외~실내)
+    final weather = ['맑음', '비', '눈', '흐림'][random.nextInt(4)];
+    
+    // 테스트 모드에서 제어된 상태 사용
+    final bug = _testBugDetected;
+    final window = _testWindowOpen;
+    
+    return AirQualityData(
+      di: di,
+      weather: weather,
+      pm25: pm25,
+      pm10: pm10,
+      bug: bug,
+      window: window,
+      timestamp: DateTime.now(),
+    );
   }
 }
