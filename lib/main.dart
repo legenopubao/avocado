@@ -287,49 +287,7 @@ class _SmartWindowHomePageState extends State<SmartWindowHomePage>
     }
   }
 
-  Map<String, dynamic> _evaluateAirQuality(AirQualityData data) {
-    int pmScore;
-    if (data.pm25 <= 15) {
-      pmScore = 0;
-    } else if (data.pm25 <= 35) {
-      pmScore = 1;
-    } else if (data.pm25 <= 75) {
-      pmScore = 2;
-    } else {
-      pmScore = 3;
-    }
 
-    int tempScore;
-    final tempDiff = (data.temperature - 22).abs();
-    if (tempDiff <= 3) {
-      tempScore = 0;
-    } else if (tempDiff <= 6) {
-      tempScore = 1;
-    } else {
-      tempScore = 2;
-    }
-
-    int humScore;
-    if (data.humidity >= 40 && data.humidity <= 60) {
-      humScore = 0;
-    } else if ((data.humidity >= 30 && data.humidity < 40) || (data.humidity > 60 && data.humidity <= 70)) {
-      humScore = 1;
-    } else {
-      humScore = 2;
-    }
-
-    final total = 0.6 * pmScore + 0.25 * tempScore + 0.15 * humScore;
-
-    if (total < 0.5) {
-      return {"status": "매우 좋음", "color": Colors.green};
-    } else if (total < 1.2) {
-      return {"status": "좋음", "color": Colors.blue};
-    } else if (total < 2.0) {
-      return {"status": "나쁨", "color": Colors.orange};
-    } else {
-      return {"status": "환기 필수", "color": Colors.red};
-    }
-  }
 
   void _showSettingsDialog() {
     _showWifiConnectionDialog();
@@ -642,20 +600,18 @@ class _SmartWindowHomePageState extends State<SmartWindowHomePage>
                     padding: const EdgeInsets.all(20.0),
                     child: Column(
                       children: [
-                        AirQualityCard(
-                          airStatus: airStatus,
-                          airData: airData,
-                          errorCount: _errorCount,
-                        ),
+                        AirQualityCard(airData: airData),
                         const SizedBox(height: 24),
                         if (airData != null) ...[
                           SensorGrid(airData: airData),
                           const SizedBox(height: 24),
                         ],
                         ControlSection(
-                          isBugDetected: false, // MQTT로부터 실시간 업데이트 예정
+                          isBugDetected: airData?.bug ?? false,
+                          isWindowOpen: airData?.window ?? false,
                           onBugDetect: () => _controlBug('bug_on'),
                           onBugRelease: () => _controlBug('bug_off'),
+                          onWindowToggle: () => _controlBug('window_toggle'),
                         ),
                         const SizedBox(height: 24),
                         PollingStatus(

@@ -18,7 +18,7 @@ class SensorGrid extends StatelessWidget {
       children: [
         _buildSensorCard(
           Icons.thermostat,
-          "온도",
+          "온도 (SHT31)",
           "${airData.temperature.toStringAsFixed(1)}°C",
           const LinearGradient(
             colors: [Color(0xFFFF5722), Color(0xFFFF7043)],
@@ -26,7 +26,7 @@ class SensorGrid extends StatelessWidget {
         ),
         _buildSensorCard(
           Icons.water_drop,
-          "습도",
+          "습도 (SHT31)",
           "${airData.humidity.toStringAsFixed(1)}%",
           const LinearGradient(
             colors: [Color(0xFF2196F3), Color(0xFF42A5F5)],
@@ -55,6 +55,7 @@ class SensorGrid extends StatelessWidget {
           const LinearGradient(
             colors: [Color(0xFFFF9800), Color(0xFFFFB74D)],
           ),
+          isHighlighted: true,
         ),
         _buildSensorCard(
           Icons.blur_circular,
@@ -63,12 +64,13 @@ class SensorGrid extends StatelessWidget {
           const LinearGradient(
             colors: [Color(0xFF795548), Color(0xFFA1887F)],
           ),
+          isHighlighted: true,
         ),
       ],
     );
   }
 
-  Widget _buildSensorCard(IconData icon, String title, String value, LinearGradient gradient) {
+  Widget _buildSensorCard(IconData icon, String title, String value, LinearGradient gradient, {bool isHighlighted = false}) {
     return Container(
       decoration: BoxDecoration(
         gradient: gradient,
@@ -76,43 +78,74 @@ class SensorGrid extends StatelessWidget {
         boxShadow: [
           BoxShadow(
             color: Colors.black.withOpacity(0.1),
-            blurRadius: 10,
+            blurRadius: isHighlighted ? 15 : 10,
             offset: const Offset(0, 5),
           ),
+          if (isHighlighted)
+            BoxShadow(
+              color: gradient.colors.first.withOpacity(0.3),
+              blurRadius: 20,
+              offset: const Offset(0, 8),
+            ),
         ],
+        border: isHighlighted ? Border.all(color: Colors.white, width: 2) : null,
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              icon,
-              size: 32,
-              color: Colors.white,
+      child: Stack(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  icon,
+                  size: isHighlighted ? 36 : 32,
+                  color: Colors.white,
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  title,
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: isHighlighted ? 15 : 14,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  value,
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: isHighlighted ? 18 : 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ],
             ),
-            const SizedBox(height: 8),
-            Text(
-              title,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
+          ),
+          if (isHighlighted)
+            Positioned(
+              top: 8,
+              right: 8,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Text(
+                  "중요",
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
               ),
-              textAlign: TextAlign.center,
             ),
-            const SizedBox(height: 4),
-            Text(
-              value,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-              ),
-              textAlign: TextAlign.center,
-            ),
-          ],
-        ),
+        ],
       ),
     );
   }
