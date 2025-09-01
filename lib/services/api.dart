@@ -1,33 +1,97 @@
 // lib/services/api.dart
 import 'dart:async';
-import 'dart:io';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'package:flutter/foundation.dart';
 
 // API 응답 데이터 모델
 class AirQualityData {
-  final double temp;
-  final double hum;
+  final double temperature;
+  final double humidity;
+  final double co2;
+  final double tvoc;
   final double pm25;
-  final bool bug;
-  final int servo;
-
+  final double pm10;
+  final DateTime timestamp;
+  
   AirQualityData({
-    required this.temp,
-    required this.hum,
+    required this.temperature,
+    required this.humidity,
+    this.co2 = 400.0, // 기본값: 실외 CO2 농도
+    this.tvoc = 0.0,  // 기본값: 0 ppb
     required this.pm25,
-    required this.bug,
-    required this.servo,
-  });
-
+    required this.pm10,
+    DateTime? timestamp,
+  }) : timestamp = timestamp ?? DateTime.now();
+  
   factory AirQualityData.fromJson(Map<String, dynamic> json) {
-    return AirQualityData(
-      temp: (json['temp'] as num).toDouble(),
-      hum: (json['hum'] as num).toDouble(),
-      pm25: (json['pm25'] as num).toDouble(),
-      bug: json['bug'] as bool,
-      servo: (json['servo'] as num).toInt(),
-    );
+    try {
+      // 필수 필드 확인
+      final requiredFields = ['temp', 'hum', 'pm25', 'pm10'];
+      for (final field in requiredFields) {
+        if (!json.containsKey(field)) {
+          throw FormatException('필수 필드가 누락되었습니다: $field');
+        }
+      }
+      
+      // 데이터 타입 검사 및 변환
+      final temp = _parseNumber(json['temp']);
+      final hum = _parseNumber(json['hum']);
+      final co2 = json.containsKey('co2') ? _parseNumber(json['co2']) : 400.0;
+      final tvoc = json.containsKey('tvoc') ? _parseNumber(json['tvoc']) : 0.0;
+      final pm25 = _parseNumber(json['pm25']);
+      final pm10 = _parseNumber(json['pm10']);
+      
+      // timestamp 처리 (선택적)
+      DateTime? timestamp;
+      if (json.containsKey('timestamp')) {
+        try {
+          if (json['timestamp'] is String) {
+            timestamp = DateTime.parse(json['timestamp']);
+          } else if (json['timestamp'] is int) {
+            timestamp = DateTime.fromMillisecondsSinceEpoch(json['timestamp']);
+          }
+        } catch (e) {
+          debugPrint('timestamp 파싱 오류: $e');
+          // timestamp 파싱 실패 시 null로 설정하여 기본값 사용
+        }
+      }
+      
+      return AirQualityData(
+        temperature: temp,
+        humidity: hum,
+        co2: co2,
+        tvoc: tvoc,
+        pm25: pm25,
+        pm10: pm10,
+        timestamp: timestamp,
+      );
+    } catch (e) {
+      debugPrint('JSON 파싱 오류: $e');
+      debugPrint('JSON 데이터: $json');
+      rethrow;
+    }
+  }
+  
+  static double _parseNumber(dynamic value) {
+    if (value == null) return 0.0;
+    if (value is num) return value.toDouble();
+    if (value is String) {
+      final parsed = double.tryParse(value);
+      return parsed ?? 0.0;
+    }
+    return 0.0;
+  }
+  
+  @override
+  String toString() {
+    return 'AirQualityData(temp: ${temperature.toStringAsFixed(1)}°C, '
+           'hum: ${humidity.toStringAsFixed(1)}%, '
+           'CO2: ${co2.toStringAsFixed(1)}ppm, '
+           'TVOC: ${tvoc.toStringAsFixed(1)}ppb, '
+           'PM2.5: ${pm25.toStringAsFixed(1)}μg/m³, '
+           'PM10: ${pm10.toStringAsFixed(1)}μg/m³, '
+           'timestamp: $timestamp)';
   }
 }
 
@@ -37,61 +101,84 @@ class ApiException implements Exception {
   ApiException(this.message);
 
   @override
-  String toString() => message;
+  String toString() => 'ApiException: $message';
 }
 
 // API 클라이언트
 class ApiClient {
-  // GET /data
-  Future<AirQualityData> getData(String baseUrl, {Duration timeout = const Duration(seconds: 3)}) async {
-    final uri = Uri.parse('$baseUrl/data');
+  String _baseUrl = '';
+
+  String get baseUrl => _baseUrl;
+  set baseUrl(String value) => _baseUrl = value;
+
+  Future<AirQualityData> getData([String? customUrl]) async {
+    final url = customUrl ?? _baseUrl;
+    if (url.isEmpty) {
+      throw ApiException('URL이 설정되지 않았습니다');
+    }
+
     try {
-      final response = await http.get(uri).timeout(timeout);
-      if (response.statusCode == 200) {
-        return AirQualityData.fromJson(json.decode(response.body));
-      } else {
-        throw ApiException('서버 응답 오류: \${response.statusCode}');
+      // URL 정규화
+      String normalizedUrl = url;
+      if (!normalizedUrl.startsWith('http://') && !normalizedUrl.startsWith('https://')) {
+        normalizedUrl = 'http://$normalizedUrl';
       }
-    } on TimeoutException {
-      throw ApiException('요청 시간 초과');
-    } on SocketException {
-      throw ApiException('네트워크에 연결할 수 없습니다.');
+      if (!normalizedUrl.endsWith('/')) {
+        normalizedUrl += '/';
+      }
+
+      final response = await http.get(
+        Uri.parse('${normalizedUrl}data'),
+        headers: {'Content-Type': 'application/json'},
+      ).timeout(const Duration(seconds: 10));
+
+      debugPrint('API 응답: ${response.statusCode} - ${response.body}');
+
+      if (response.statusCode == 200) {
+        final jsonData = json.decode(response.body);
+        return AirQualityData.fromJson(jsonData);
+      } else {
+        throw ApiException('HTTP 오류: ${response.statusCode}');
+      }
     } catch (e) {
-      throw ApiException('알 수 없는 오류: \$e');
+      debugPrint('API 요청 오류: $e');
+      if (e is ApiException) rethrow;
+      throw ApiException('연결 오류: $e');
     }
   }
 
-  // GET /bugOn
-  Future<Map<String, dynamic>> bugOn(String baseUrl) async {
-    return _controlRequest('$baseUrl/bugOn');
-  }
+  Future<bool> controlBug(String command) async {
+    if (_baseUrl.isEmpty) {
+      throw ApiException('URL이 설정되지 않았습니다');
+    }
 
-  // GET /bugOff
-  Future<Map<String, dynamic>> bugOff(String baseUrl) async {
-    return _controlRequest('$baseUrl/bugOff');
-  }
-
-  // 공통 제어 로직
-  Future<Map<String, dynamic>> _controlRequest(String url) async {
-    final uri = Uri.parse(url);
     try {
-      final response = await http.get(uri).timeout(const Duration(seconds: 5));
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        if (data['ok'] == true) {
-          return data;
-        } else {
-          throw ApiException(data['msg'] ?? '알 수 없는 제어 오류');
-        }
-      } else {
-        throw ApiException('서버 응답 오류: \${response.statusCode}');
+      String normalizedUrl = _baseUrl;
+      if (!normalizedUrl.startsWith('http://') && !normalizedUrl.startsWith('https://')) {
+        normalizedUrl = 'http://$normalizedUrl';
       }
-    } on TimeoutException {
-      throw ApiException('요청 시간 초과');
-    } on SocketException {
-      throw ApiException('네트워크에 연결할 수 없습니다.');
+      if (!normalizedUrl.endsWith('/')) {
+        normalizedUrl += '/';
+      }
+
+      final response = await http.post(
+        Uri.parse('${normalizedUrl}control'),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({'command': command}),
+      ).timeout(const Duration(seconds: 10));
+
+      debugPrint('제어 명령 응답: ${response.statusCode} - ${response.body}');
+
+      if (response.statusCode == 200) {
+        final jsonData = json.decode(response.body);
+        return jsonData['ok'] == true;
+      } else {
+        throw ApiException('HTTP 오류: ${response.statusCode}');
+      }
     } catch (e) {
-      throw ApiException('알 수 없는 오류: \$e');
+      debugPrint('제어 명령 오류: $e');
+      if (e is ApiException) rethrow;
+      throw ApiException('제어 오류: $e');
     }
   }
 }

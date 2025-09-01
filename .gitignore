@@ -33,6 +33,30 @@ migrate_working_dir/
 /build/
 /coverage/
 
+# Generated files
+*.g.dart
+*.freezed.dart
+*.mocks.dart
+
+# IDE files
+.vscode/
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+*.log
+
 # Symbolication related
 app.*.symbols
 

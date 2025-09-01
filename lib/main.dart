@@ -1,9 +1,13 @@
-'''// lib/main.dart
+// lib/main.dart
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'services/communication_service.dart';
 import 'services/api.dart';
+import 'widgets/air_quality_card.dart';
+import 'widgets/sensor_grid.dart';
+import 'widgets/control_section.dart';
+import 'widgets/polling_status.dart';
+import 'widgets/connection_dialog.dart';
 
 void main() {
   runApp(const SmartWindowApp());
@@ -15,10 +19,14 @@ class SmartWindowApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: '스마트 창문',
+      title: 'Airocado',
       theme: ThemeData(
-        primarySwatch: Colors.blue,
+        primarySwatch: Colors.green,
         useMaterial3: true,
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xFF4CAF50),
+          brightness: Brightness.light,
+        ),
       ),
       home: const SmartWindowHomePage(),
     );
@@ -32,9 +40,9 @@ class SmartWindowHomePage extends StatefulWidget {
   State<SmartWindowHomePage> createState() => _SmartWindowHomePageState();
 }
 
-class _SmartWindowHomePageState extends State<SmartWindowHomePage> with WidgetsBindingObserver {
-  final ApiClient _apiClient = ApiClient();
-  String? _baseUrl;
+class _SmartWindowHomePageState extends State<SmartWindowHomePage> 
+    with WidgetsBindingObserver, TickerProviderStateMixin {
+  final CommunicationService _commService = CommunicationService();
   AirQualityData? _airQualityData;
   DateTime? _lastUpdated;
   bool _isPolling = true;
@@ -42,11 +50,28 @@ class _SmartWindowHomePageState extends State<SmartWindowHomePage> with WidgetsB
   int _errorCount = 0;
   String? _lastError;
   Timer? _pollingTimer;
+  
+  late AnimationController _fadeController;
+  late Animation<double> _fadeAnimation;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    
+    _fadeController = AnimationController(
+      duration: const Duration(milliseconds: 800),
+      vsync: this,
+    );
+    
+    _fadeAnimation = Tween<double>(
+      begin: 0.0,
+      end: 1.0,
+    ).animate(CurvedAnimation(
+      parent: _fadeController,
+      curve: Curves.easeInOut,
+    ));
+    
     _loadBaseUrlAndStart();
   }
 
@@ -54,36 +79,165 @@ class _SmartWindowHomePageState extends State<SmartWindowHomePage> with WidgetsB
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _pollingTimer?.cancel();
+    _commService.dispose();
+    _fadeController.dispose();
     super.dispose();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      if (_isPolling) {
-        _startPolling();
-      }
+      if (_isPolling) _startPolling();
     } else if (state == AppLifecycleState.paused) {
       _pollingTimer?.cancel();
     }
   }
 
   Future<void> _loadBaseUrlAndStart() async {
-    final prefs = await SharedPreferences.getInstance();
-    final savedUrl = prefs.getString('baseUrl');
-    if (savedUrl == null || savedUrl.isEmpty) {
-      _showSettingsDialog();
-    } else {
+    await _commService.loadSettings();
+    
+    _commService.dataStream.listen((data) {
       setState(() {
-        _baseUrl = savedUrl;
+        _airQualityData = data;
+        _lastUpdated = DateTime.now();
+        _errorCount = 0;
+        _lastError = null;
       });
+    });
+    
+    if (!_commService.httpConnected && !_commService.mqttConnected) {
+      _showWifiConnectionDialog();
+    } else {
       _startPolling();
+    }
+    
+    _fadeController.forward();
+  }
+
+  void _showWifiConnectionDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => ConnectionDialog(
+        onAutoConnect: _tryAutoConnect,
+        onManualConnect: _showHttpSettings,
+        onCancel: () => Navigator.pop(context),
+      ),
+    );
+  }
+
+  Future<void> _tryAutoConnect() async {
+    final messenger = ScaffoldMessenger.of(context);
+    final commonUrls = [
+      'http://192.168.1.100:8000',
+      'http://192.168.4.1:8000',
+      'http://esp32.local:8000',
+      'http://192.168.1.101:8000',
+      'http://192.168.1.102:8000',
+    ];
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: Container(
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            gradient: const LinearGradient(
+              colors: [Color(0xFF4CAF50), Color(0xFF66BB6A)],
+            ),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const CircularProgressIndicator(valueColor: AlwaysStoppedAnimation<Color>(Colors.white)),
+              const SizedBox(height: 16),
+              const Text(
+                "ESP32 연결 시도 중...",
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    bool connected = false;
+    String? successfulUrl;
+
+    for (String url in commonUrls) {
+      try {
+        debugPrint('자동 연결 시도: $url');
+        final success = await _commService.setHttpConfig(url);
+        if (success) {
+          connected = true;
+          successfulUrl = url;
+          break;
+        }
+      } catch (e) {
+        debugPrint('연결 실패: $url - $e');
+        continue;
+      }
+    }
+
+    if (mounted) {
+      Navigator.pop(context);
+    }
+
+    if (connected && successfulUrl != null) {
+      if (mounted) {
+        messenger.showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.check_circle, color: Colors.white),
+                const SizedBox(width: 8),
+                Expanded(child: Text('ESP32 연결 성공! ($successfulUrl)')),
+              ],
+            ),
+            duration: const Duration(seconds: 3),
+            backgroundColor: const Color(0xFF4CAF50),
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+        );
+      }
+      _startPolling();
+      if (mounted) {
+        Navigator.pop(context);
+      }
+    } else {
+      if (mounted) {
+        Navigator.pop(context);
+        messenger.showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.warning, color: Colors.white),
+                const SizedBox(width: 8),
+                const Expanded(child: Text('자동 연결 실패. 수동 설정을 시도해주세요.')),
+              ],
+            ),
+            duration: const Duration(seconds: 3),
+            backgroundColor: const Color(0xFFFF9800),
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+        );
+      }
+      _showHttpSettings();
     }
   }
 
   void _startPolling() {
     _pollingTimer?.cancel();
-    if (!_isPolling || _baseUrl == null) return;
+    if (!_isPolling || (!_commService.httpConnected && !_commService.mqttConnected)) return;
 
     _pollingTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
       _fetchData();
@@ -91,19 +245,18 @@ class _SmartWindowHomePageState extends State<SmartWindowHomePage> with WidgetsB
   }
 
   Future<void> _fetchData() async {
-    if (_baseUrl == null) return;
+    if (!_commService.httpConnected && !_commService.mqttConnected) return;
     setState(() {
       _isLoading = true;
     });
     try {
-      final data = await _apiClient.getData(_baseUrl!);
-      setState(() {
-        _airQualityData = data;
-        _lastUpdated = DateTime.now();
-        _errorCount = 0;
-        _lastError = null;
-      });
+      debugPrint('데이터 요청 시작');
+      final data = await _commService.fetchData();
+      if (data != null) {
+        debugPrint('데이터 수신 성공: ${data.temperature}°C, ${data.humidity}%, PM2.5 ${data.pm25}');
+      }
     } catch (e) {
+      debugPrint('데이터 요청 실패: $e');
       setState(() {
         _errorCount++;
         _lastError = e.toString();
@@ -115,15 +268,17 @@ class _SmartWindowHomePageState extends State<SmartWindowHomePage> with WidgetsB
     }
   }
 
-  Future<void> _controlBug(Future<Map<String, dynamic>> Function(String) apiFunc) async {
-    if (_baseUrl == null) return;
+  Future<void> _controlBug(String command) async {
+    if (!_commService.httpConnected && !_commService.mqttConnected) return;
     try {
-      final result = await apiFunc(_baseUrl!);
+      final success = await _commService.controlBug(command);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(result['msg'] ?? '성공')),
+        SnackBar(content: Text(success ? '성공' : '실패')),
       );
-      await _fetchData();
+      if (success) {
+        await _fetchData();
+      }
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -132,7 +287,6 @@ class _SmartWindowHomePageState extends State<SmartWindowHomePage> with WidgetsB
     }
   }
 
-  // 등급 산출
   Map<String, dynamic> _evaluateAirQuality(AirQualityData data) {
     int pmScore;
     if (data.pm25 <= 15) {
@@ -146,7 +300,7 @@ class _SmartWindowHomePageState extends State<SmartWindowHomePage> with WidgetsB
     }
 
     int tempScore;
-    final tempDiff = (data.temp - 22).abs();
+    final tempDiff = (data.temperature - 22).abs();
     if (tempDiff <= 3) {
       tempScore = 0;
     } else if (tempDiff <= 6) {
@@ -156,9 +310,9 @@ class _SmartWindowHomePageState extends State<SmartWindowHomePage> with WidgetsB
     }
 
     int humScore;
-    if (data.hum >= 40 && data.hum <= 60) {
+    if (data.humidity >= 40 && data.humidity <= 60) {
       humScore = 0;
-    } else if ((data.hum >= 30 && data.hum < 40) || (data.hum > 60 && data.hum <= 70)) {
+    } else if ((data.humidity >= 30 && data.humidity < 40) || (data.humidity > 60 && data.humidity <= 70)) {
       humScore = 1;
     } else {
       humScore = 2;
@@ -178,63 +332,282 @@ class _SmartWindowHomePageState extends State<SmartWindowHomePage> with WidgetsB
   }
 
   void _showSettingsDialog() {
-    showDialog<String>(
+    _showWifiConnectionDialog();
+  }
+
+  void _showHttpSettings() {
+    showDialog(
       context: context,
       barrierDismissible: false,
       builder: (context) {
-        final controller = TextEditingController(text: _baseUrl);
-        return AlertDialog(
-          title: const Text("ESP32 주소 설정"),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: controller,
-                decoration: const InputDecoration(
-                  hintText: "http://192.168.x.xx",
-                ),
+        final controller = TextEditingController();
+        return Dialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          child: Container(
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(20),
+              gradient: const LinearGradient(
+                colors: [Color(0xFFFF9800), Color(0xFFF57C00)],
               ),
-              const SizedBox(height: 10),
-              ElevatedButton(
-                onPressed: () async {
-                  try {
-                    final data = await _apiClient.getData(controller.text, timeout: const Duration(seconds: 2));
-                    if (!mounted) return;
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('연결 성공: 온도 ${data.temp}°C, 습도 ${data.hum}%, PM2.5 ${data.pm25}')),
-                    );
-                  } catch (e) {
-                    if (!mounted) return;
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('연결 실패: $e')),
-                    );
-                  }
-                },
-                child: const Text("연결 테스트"),
-              )
-            ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.withAlpha(3),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white, width: 3),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withAlpha(3),
+                        blurRadius: 10,
+                        offset: const Offset(0, 5),
+                      ),
+                    ],
+                  ),
+                  child: const Icon(Icons.wifi, size: 64, color: Colors.white),
+                ),
+                const SizedBox(height: 20),
+                const Text(
+                  "ESP32 수동 연결",
+                  style: TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  "ESP32의 IP 주소를 입력해주세요",
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 16,
+                    color: Colors.white,
+                    height: 1.5,
+                  ),
+                ),
+                const SizedBox(height: 20),
+                Container(
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(12),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black,
+                        blurRadius: 8,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: TextField(
+                    controller: controller,
+                    decoration: const InputDecoration(
+                      labelText: "ESP32 주소",
+                      hintText: "http://192.168.1.100:8000",
+                      border: InputBorder.none,
+                      contentPadding: EdgeInsets.all(16),
+                      labelStyle: TextStyle(color: Color(0xFF666666)),
+                    ),
+                    keyboardType: TextInputType.url,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.withAlpha(1),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.white.withAlpha(3), width: 1),
+                  ),
+                  child: const Text(
+                    "일반적인 ESP32 주소:\n• http://192.168.1.100:8000\n• http://192.168.4.1:8000\n• http://esp32.local:8000",
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: Colors.white,
+                      height: 1.4,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 24),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: const Text("취소", style: TextStyle(color: Colors.white70)),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Container(
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(
+                            colors: [Color(0xFF2E7D32), Color(0xFF388E3C)],
+                          ),
+                          borderRadius: BorderRadius.circular(12),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black,
+                              blurRadius: 8,
+                              offset: const Offset(0, 4),
+                            ),
+                          ],
+                        ),
+                        child: ElevatedButton(
+                          onPressed: () async {
+                            final testUrl = controller.text.trim();
+                            if (testUrl.isEmpty) {
+                              if (mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Row(
+                                      children: [
+                                        const Icon(Icons.warning, color: Colors.white),
+                                        const SizedBox(width: 8),
+                                        const Text('URL을 입력해주세요'),
+                                      ],
+                                    ),
+                                    backgroundColor: const Color(0xFFFF9800),
+                                    behavior: SnackBarBehavior.floating,
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                  ),
+                                );
+                              }
+                              return;
+                            }
+                            
+                            showDialog(
+                              context: context,
+                              barrierDismissible: false,
+                              builder: (context) => Dialog(
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                                child: Container(
+                                  padding: const EdgeInsets.all(24),
+                                  decoration: BoxDecoration(
+                                    borderRadius: BorderRadius.circular(16),
+                                    gradient: const LinearGradient(
+                                      colors: [Color(0xFF4CAF50), Color(0xFF66BB6A)],
+                                    ),
+                                  ),
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      const CircularProgressIndicator(valueColor: AlwaysStoppedAnimation<Color>(Colors.white)),
+                                      const SizedBox(height: 16),
+                                      const Text(
+                                        "ESP32 연결 테스트 중...",
+                                        style: TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            );
+                            
+                            try {
+                              debugPrint('HTTP 연결 테스트 시작: $testUrl');
+                              final success = await _commService.setHttpConfig(testUrl);
+                              
+                              if (mounted) {
+                                Navigator.pop(context);
+                              }
+                              
+                              if (success) {
+                                if (mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Row(
+                                        children: [
+                                          const Icon(Icons.check_circle, color: Colors.white),
+                                          const SizedBox(width: 8),
+                                          Expanded(child: Text('ESP32 연결 성공! ($testUrl)')),
+                                        ],
+                                      ),
+                                      duration: const Duration(seconds: 3),
+                                      backgroundColor: const Color(0xFF4CAF50),
+                                      behavior: SnackBarBehavior.floating,
+                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                    ),
+                                  );
+                                }
+                                _startPolling();
+                                if (mounted) {
+                                  Navigator.pop(context);
+                                }
+                              } else {
+                                if (mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Row(
+                                        children: [
+                                          const Icon(Icons.error),
+                                          const SizedBox(width: 8),
+                                          const Expanded(child: Text('ESP32 연결 실패. 주소를 확인해주세요.')),
+                                        ],
+                                      ),
+                                      duration: const Duration(seconds: 5),
+                                      backgroundColor: const Color(0xFFFF6B6B),
+                                      behavior: SnackBarBehavior.floating,
+                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                    ),
+                                  );
+                                }
+                              }
+                            } catch (e) {
+                              if (mounted) {
+                                Navigator.pop(context);
+                              }
+                              
+                              debugPrint('HTTP 연결 테스트 실패: $e');
+                              if (mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Row(
+                                      children: [
+                                        const Icon(Icons.error),
+                                        const SizedBox(width: 8),
+                                        Expanded(child: Text('연결 실패: $e')),
+                                      ],
+                                    ),
+                                    duration: const Duration(seconds: 5),
+                                    backgroundColor: const Color(0xFFFF6B6B),
+                                    behavior: SnackBarBehavior.floating,
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                  ),
+                                );
+                              }
+                            }
+                          },
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.transparent,
+                            shadowColor: Colors.transparent,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                          ),
+                          child: const Text(
+                            "연결 테스트",
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w600,
+                              fontSize: 14,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text("취소"),
-            ),
-            ElevatedButton(
-              onPressed: () async {
-                final newUrl = controller.text;
-                if (newUrl.isNotEmpty) {
-                  final prefs = await SharedPreferences.getInstance();
-                  await prefs.setString('baseUrl', newUrl);
-                  setState(() {
-                    _baseUrl = newUrl;
-                  });
-                  _startPolling();
-                  if(mounted) Navigator.pop(context);
-                }
-              },
-              child: const Text("저장"),
-            ),
-          ],
         );
       },
     );
@@ -250,174 +623,140 @@ class _SmartWindowHomePageState extends State<SmartWindowHomePage> with WidgetsB
     }
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text("스마트 창문"),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.settings),
-            onPressed: _showSettingsDialog,
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [Color(0xFF4CAF50), Color(0xFF66BB6A)],
           ),
-        ],
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          children: [
-            // 공기질 상태 배너
-            Container(
-              padding: const EdgeInsets.all(16),
-              margin: const EdgeInsets.only(bottom: 16),
-              decoration: BoxDecoration(
-                color: airStatus["color"],
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    airStatus["status"],
-                    style: const TextStyle(
-                      fontSize: 24,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
+        ),
+        child: SafeArea(
+          child: FadeTransition(
+            opacity: _fadeAnimation,
+            child: CustomScrollView(
+              slivers: [
+                _buildAppBar(),
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.all(20.0),
+                    child: Column(
+                      children: [
+                        AirQualityCard(
+                          airStatus: airStatus,
+                          airData: airData,
+                          errorCount: _errorCount,
+                        ),
+                        const SizedBox(height: 24),
+                        if (airData != null) ...[
+                          SensorGrid(airData: airData),
+                          const SizedBox(height: 24),
+                        ],
+                        ControlSection(
+                          isBugDetected: false, // MQTT로부터 실시간 업데이트 예정
+                          onBugDetect: () => _controlBug('bug_on'),
+                          onBugRelease: () => _controlBug('bug_off'),
+                        ),
+                        const SizedBox(height: 24),
+                        PollingStatus(
+                          isPolling: _isPolling,
+                          isLoading: _isLoading,
+                          lastUpdated: _lastUpdated,
+                          errorCount: _errorCount,
+                          lastError: _lastError,
+                          onPollingChanged: (value) {
+                            setState(() {
+                              _isPolling = value;
+                              if (_isPolling) {
+                                _startPolling();
+                              } else {
+                                _pollingTimer?.cancel();
+                              }
+                            });
+                          },
+                        ),
+                        const SizedBox(height: 20),
+                      ],
                     ),
                   ),
-                  if (airData != null && _errorCount < 3)
-                    Text(
-                      "${airData.temp.toStringAsFixed(1)}°C • ${airData.hum.toStringAsFixed(1)}% • PM2.5 ${airData.pm25.toStringAsFixed(1)}",
-                      style: const TextStyle(color: Colors.white),
-                    ),
-                ],
-              ),
-            ),
-            // 센서 데이터 카드
-            if (airData != null) ...[
-              _buildDataCard(Icons.thermostat, "온도", "${airData.temp.toStringAsFixed(1)} °C"),
-              _buildDataCard(Icons.water_drop, "습도", "${airData.hum.toStringAsFixed(1)} %"),
-              _buildDataCard(Icons.blur_on, "PM2.5", "${airData.pm25.toStringAsFixed(1)} µg/m³"),
-            ],
-            const SizedBox(height: 16),
-            // 벌레 감지 섹션
-            _buildControlSection(),
-            const SizedBox(height: 16),
-            // 폴링 상태
-            _buildPollingStatus(),
-          ],
-        ),
-      ),
-      floatingActionButton: !_isPolling
-          ? FloatingActionButton(
-              onPressed: _fetchData,
-              child: const Icon(Icons.refresh),
-            )
-          : null,
-    );
-  }
-
-  Widget _buildDataCard(IconData icon, String label, String value) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Row(
-          children: [
-            Icon(icon, size: 32, color: Theme.of(context).primaryColor),
-            const SizedBox(width: 16),
-            Text(label, style: const TextStyle(fontSize: 18)),
-            const Spacer(),
-            Text(value, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildControlSection() {
-    final bool isBugDetected = _airQualityData?.bug ?? false;
-
-    return Column(
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            AnimatedOpacity(
-              duration: const Duration(milliseconds: 300),
-              opacity: isBugDetected ? 1.0 : 0.4,
-              child: const Icon(Icons.pest_control, size: 32, color: Colors.brown),
-            ),
-            const SizedBox(width: 8),
-            Text(
-              isBugDetected ? '벌레 감지됨' : '감지 해제',
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-            ),
-          ],
-        ),
-        const SizedBox(height: 16),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-          children: [
-            ElevatedButton.icon(
-              icon: const Icon(Icons.block),
-              label: const Text('벌레 감지 (닫기)'),
-              onPressed: () => _controlBug(_apiClient.bugOn),
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.red.shade100),
-            ),
-            ElevatedButton.icon(
-              icon: const Icon(Icons.autorenew),
-              label: const Text('해제 (자동 복귀)'),
-              onPressed: () => _controlBug(_apiClient.bugOff),
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.green.shade100),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-
-  Widget _buildPollingStatus() {
-    return Column(
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Text('자동 갱신'),
-            Switch(
-              value: _isPolling,
-              onChanged: (value) {
-                setState(() {
-                  _isPolling = value;
-                  if (_isPolling) {
-                    _startPolling();
-                  } else {
-                    _pollingTimer?.cancel();
-                  }
-                });
-              },
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
-        AnimatedOpacity(
-          duration: const Duration(milliseconds: 300),
-          opacity: _isLoading ? 1.0 : 0.0,
-          child: const LinearProgressIndicator(),
-        ),
-        const SizedBox(height: 8),
-        Text(
-          _lastUpdated != null
-              ? '마지막 갱신: ${DateFormat('HH:mm:ss').format(_lastUpdated!)}'
-              : '갱신 대기 중...',
-          style: const TextStyle(color: Colors.grey),
-        ),
-        if (_errorCount > 0)
-          Padding(
-            padding: const EdgeInsets.only(top: 8.0),
-            child: Text(
-              '연결 오류: $_lastError ($_errorCount회)',
-              style: const TextStyle(color: Colors.redAccent),
+                ),
+              ],
             ),
           ),
+        ),
+      ),
+      floatingActionButton: !_isPolling ? _buildRefreshButton() : null,
+    );
+  }
+
+  Widget _buildAppBar() {
+    return SliverAppBar(
+      expandedHeight: 120,
+      floating: false,
+      pinned: true,
+      backgroundColor: Colors.transparent,
+      elevation: 0,
+      flexibleSpace: FlexibleSpaceBar(
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(4),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Image.asset(
+                'icons/Icon-512.png',
+                width: 32,
+                height: 32,
+                fit: BoxFit.contain,
+              ),
+            ),
+            const SizedBox(width: 12),
+            const Text(
+              "Airocado",
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 24,
+              ),
+            ),
+          ],
+        ),
+        background: Container(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [Color(0xFF4CAF50), Color(0xFF66BB6A)],
+            ),
+          ),
+        ),
+      ),
+      actions: [
+        Container(
+          margin: const EdgeInsets.only(right: 16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+          ),
+                      child: IconButton(
+              icon: const Icon(Icons.settings, color: Colors.white),
+              onPressed: _showSettingsDialog,
+            ),
+        ),
       ],
+    );
+  }
+
+  Widget _buildRefreshButton() {
+    return FloatingActionButton(
+      onPressed: () {
+        _fetchData();
+      },
+      backgroundColor: const Color(0xFF4CAF50),
+      elevation: 8,
+      child: const Icon(Icons.refresh, color: Colors.white),
     );
   }
 }
-''
