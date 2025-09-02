@@ -1,0 +1,36 @@
+name: airocado
+description: "Airocado - 스마트 윈도우 제어 및 대기질 관리 시스템"
+publish_to: 'none'
+version: 1.1.0+2
+
+environment:
+  sdk: ^3.9.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.2
+  http: ^1.1.0
+  shared_preferences: ^2.2.2
+  mqtt_client: ^10.2.0
+  geolocator: ^10.1.0  # 위치 정보
+  geocoding: ^2.1.1    # 좌표를 주소로 변환
+  intl: ^0.20.2        # 날짜 포맷팅
+  flutter_dotenv: ^5.1.0  # 환경 변수 관리
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
+  
+  assets:
+    - .env
+    - icons/
+  # 필요하면 에셋/폰트를 여기에 추가합니다.
+  # fonts:
+  #   - family: MyFont
+  #     fonts:
+  #       - asset: assets/fonts/MyFont.ttf
