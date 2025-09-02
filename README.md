@@ -39,6 +39,7 @@
 - Tailscale : 외부 망에서 라즈베리파이 원격 연결을 위한 VPN
 - Flutter : 앱 설계 & 라즈베리파이와 ESP32 연동
 - EasyEDA : 회로 설계 프로그램
-- Autodesk Fusion : 창문 틀 설계 프로그램
+- Autodesk Fusion : 창문 틀 3d 모델링
+- Autodesk Autocad : 창문 틀 설계 프로그램
 
 ## 2025년 이후 사용한 라이브러리와 예시 코드도 업로드 할 에정입니다.
