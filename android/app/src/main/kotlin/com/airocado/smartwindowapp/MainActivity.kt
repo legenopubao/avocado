@@ -1,4 +1,4 @@
-package com.example.smart_window_app
+package com.airocado.smartwindowapp
 
 import io.flutter.embedding.android.FlutterActivity
 

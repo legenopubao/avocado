@@ -175,6 +175,12 @@ class CommunicationService {
       if (_httpConnected) {
         final data = await _apiClient.getData();
         _dataController.add(data);
+        // ESP가 구독하는 MQTT 토픽으로 PM 데이터를 발행 (동기화 목적)
+        if (_mqttConnected) {
+          // 정수/문자열로 보낼 필요는 없지만 ESP 예시와 동일하게 문자열 전송
+          await _mqttService.publishPm25(data.pm25);
+          await _mqttService.publishPm10(data.pm10);
+        }
         return data;
       }
       

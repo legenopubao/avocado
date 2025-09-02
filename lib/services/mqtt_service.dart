@@ -14,6 +14,9 @@ class MqttService {
   static const int _port = 1883;
   static const String _clientId = 'flutter_app_001';
   static const String _pumpTopic = 's_window/pump';
+  static const String _aqiTopic = 's_window/aqi';
+  static const String _pm25Topic = 's_window/pm25';
+  static const String _pm10Topic = 's_window/pm10';
   static const String _sensorTopic = 's_window/sensor';
   
   // 콜백 함수들
@@ -77,6 +80,14 @@ class MqttService {
       _client!.subscribe(_pumpTopic, MqttQos.atLeastOnce);
       debugPrint('토픽 구독: $_pumpTopic');
       
+      // ESP에서 사용할 토픽들 (필요시 수신 확인용으로 구독)
+      _client!.subscribe(_aqiTopic, MqttQos.atLeastOnce);
+      debugPrint('토픽 구독: $_aqiTopic');
+      _client!.subscribe(_pm25Topic, MqttQos.atLeastOnce);
+      debugPrint('토픽 구독: $_pm25Topic');
+      _client!.subscribe(_pm10Topic, MqttQos.atLeastOnce);
+      debugPrint('토픽 구독: $_pm10Topic');
+      
       // 센서 데이터 토픽 구독 (향후 확장용)
       _client!.subscribe(_sensorTopic, MqttQos.atLeastOnce);
       debugPrint('토픽 구독: $_sensorTopic');
@@ -124,6 +135,19 @@ class MqttService {
   // 펌프 제어 메시지 발행 (라즈베리파이와 통신)
   Future<bool> controlPump(String command) async {
     return await publishMessage(_pumpTopic, command);
+  }
+  
+  // AQI/PM 발행 (ESP가 구독하는 형식에 맞춤)
+  Future<bool> publishAqi(int aqi) async {
+    return await publishMessage(_aqiTopic, aqi.toString());
+  }
+  
+  Future<bool> publishPm25(double pm25) async {
+    return await publishMessage(_pm25Topic, pm25.toString());
+  }
+  
+  Future<bool> publishPm10(double pm10) async {
+    return await publishMessage(_pm10Topic, pm10.toString());
   }
   
   // 센서 데이터 요청

@@ -70,3 +70,7 @@ app.*.map.json
 
 # 환경 변수 파일
 .env
+
+# 서명키 파일
+*.jks
+*.keystore

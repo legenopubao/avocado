@@ -8,6 +8,8 @@ import 'dart:math'; // Added for Random
 // API 응답 데이터 모델
 class AirQualityData {
   final double di; // 불쾌지수 (Discomfort Index)
+  final double temperature;//온도
+  final double humidity;//습도
   final String weather; // 날씨 정보 (맑음, 비, 눈, 흐림 등)
   final double pm25;
   final double pm10;
@@ -16,7 +18,9 @@ class AirQualityData {
   final DateTime timestamp;
 
   AirQualityData({
-    required this.di,
+    this.di = 0, // 기본값 0. temperature, humidity 입력받은 후 계산하여 사용
+    required this.temperature,
+    required this.humidity,
     this.weather = '맑음', // 기본값: 맑음
     required this.pm25,
     required this.pm10,
@@ -26,8 +30,8 @@ class AirQualityData {
   }) : timestamp = timestamp ?? DateTime.now();
   
   factory AirQualityData.fromJson(Map<String, dynamic> json) {
-    // 필수 필드 확인
-    final requiredFields = ['di', 'pm25', 'pm10'];
+    // 필수 필드 확인 (DI는 온/습도로 계산 가능하므로 필수에서 제외)
+    final requiredFields = ['pm25', 'pm10'];
     for (final field in requiredFields) {
       if (!json.containsKey(field)) {
         throw FormatException('필수 필드가 누락되었습니다: $field');
@@ -35,7 +39,15 @@ class AirQualityData {
     }
 
     // 데이터 타입 검사 및 변환
-    final di = _parseNumber(json['di']);
+    // 온도/습도 파싱 (다양한 키 허용)
+    final temperature = _parseNumber(
+      json['temperature'] ?? json['temp'] ?? json['t'],
+    );
+    final humidity = _parseNumber(
+      json['humidity'] ?? json['hum'] ?? json['h'],
+    );
+    // DI 제공 시 파싱, 없으면 뒤에서 계산
+    double di = _parseNumber(json['di']);
     final weather = json.containsKey('weather') ? json['weather'] as String : '맑음';
     final pm25 = _parseNumber(json['pm25']);
     final pm10 = _parseNumber(json['pm10']);
@@ -57,8 +69,15 @@ class AirQualityData {
       }
     }
 
+    // DI 계산: di 값이 제공되지 않았거나 0일 때, 유효한 온/습도 기반으로 계산
+    if ((di == 0 || di.isNaN) && (temperature != 0 || humidity != 0)) {
+      di = computeDiscomfortIndex(temperature: temperature, humidity: humidity);
+    }
+
     return AirQualityData(
       di: di,
+      temperature: temperature,
+      humidity: humidity,
       weather: weather,
       pm25: pm25,
       pm10: pm10,
@@ -66,6 +85,14 @@ class AirQualityData {
       window: window,
       timestamp: timestamp,
     );
+  }
+  
+  // 불쾌지수 계산 함수 (DI)
+  static double computeDiscomfortIndex({required double temperature, required double humidity}) {
+    // di = 0.81*T + 0.01*H*(0.99*T - 14.3) + 46.3
+    final t = temperature;
+    final h = humidity;
+    return 0.81 * t + 0.01 * h * (0.99 * t - 14.3) + 46.3;
   }
   
   static double _parseNumber(dynamic value) {
@@ -376,8 +403,10 @@ class ApiClient {
     // 랜덤하게 변하는 테스트 데이터 생성
     final random = Random();
     
-    // 불쾌지수: 65~85 범위 (쾌적~불쾌)
-    final di = 65.0 + random.nextDouble() * 20.0;
+    // 온도/습도 생성 후 DI 공식으로 계산
+    final temperature = 20.0 + random.nextDouble() * 10.0; // 20~30°C
+    final humidity = 40.0 + random.nextDouble() * 40.0; // 40~80%
+    final di = AirQualityData.computeDiscomfortIndex(temperature: temperature, humidity: humidity);
     
     // PM2.5: 10~60 범위 (좋음~나쁨)
     final pm25 = 10.0 + random.nextDouble() * 50.0;
@@ -394,6 +423,8 @@ class ApiClient {
     
     return AirQualityData(
       di: di,
+      temperature: temperature,
+      humidity: humidity,
       weather: weather,
       pm25: pm25,
       pm10: pm10,

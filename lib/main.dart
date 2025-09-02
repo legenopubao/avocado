@@ -320,6 +320,8 @@ class _SmartWindowHomePageState extends State<SmartWindowHomePage>
           if (_airQualityData != null) {
             _airQualityData = AirQualityData(
               di: _airQualityData!.di,
+              temperature: _airQualityData!.temperature,
+              humidity: _airQualityData!.humidity,
               weather: _airQualityData!.weather,
               pm25: _airQualityData!.pm25,
               pm10: _airQualityData!.pm10,
