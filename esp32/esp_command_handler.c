@@ -42,5 +42,3 @@ void esp_handle_command(const char *command)
 
 	ESP_LOGW(TAG_CMD, "Unknown command: %s", command);
 }
-
-

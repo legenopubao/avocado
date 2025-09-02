@@ -1,0 +1,21 @@
+# RaspberryPi Python 패키지 요구사항
+
+# HTTP 요청
+requests>=2.31.0
+
+# 환경변수 관리
+python-dotenv>=1.0.0
+
+# MQTT 클라이언트
+paho-mqtt>=1.6.1
+
+# 데이터 처리
+numpy>=1.24.0
+pandas>=2.0.0
+
+# 센서 데이터 처리
+adafruit-circuitpython-bme280>=3.0.0
+adafruit-circuitpython-pmsa003i>=1.0.0
+
+# 로깅
+colorlog>=6.7.0
