@@ -76,6 +76,16 @@ void setup_wifi() {
     Serial.print(".");
   }
   Serial.println("\nWiFi connected!");
+  
+  // WiFi 연결 정보 출력
+  Serial.print("WiFi SSID: ");
+  Serial.println(ssid);
+  Serial.print("IP Address: ");
+  Serial.println(WiFi.localIP());
+  Serial.print("Gateway: ");
+  Serial.println(WiFi.gatewayIP());
+  Serial.print("Subnet: ");
+  Serial.println(WiFi.subnetMask());
 }
 
 //창문 닫기
@@ -264,7 +274,7 @@ void callback(char* topic, byte* payload, unsigned int length) {
   else if (strcmp(topic, "s_window/pump") == 0) {  //Pump 작동 여부
 
     if (data.equals("ON")) {  //벌레 일정 수 이상 감지
-      Serial.println("Pump ON -> Servo 동작 & LED 켜기");
+      Serial.println("Pump ON -> Servo 동작 & 워터펌프 작동");
       is_window = 0;
       close_window();
       activatePump();
@@ -284,10 +294,7 @@ void setup() {
   Serial.begin(115200);
 
   //Servo Setup
-  myservo.attach(servoPin, 500, 2500);  
-
-  pinMode(LED, OUTPUT);
-  digitalWrite(LED, LOW); // 초기 OFF
+  myservo.attach(servoPin, 500, 2500);
   
   // 워터펌프 핀 초기화
   pinMode(WATER_PUMP_PIN, OUTPUT);
@@ -309,6 +316,16 @@ void setup() {
   server.on("/data", HTTP_GET, handle_http_data);
   server.on("/control", HTTP_POST, handle_http_control);
   server.begin();
+  
+  // HTTP 서버 상태 출력
+  Serial.println("HTTP 서버 시작됨!");
+  Serial.print("HTTP 서버 주소: http://");
+  Serial.print(WiFi.localIP());
+  Serial.println(":80");
+  Serial.println("사용 가능한 엔드포인트:");
+  Serial.println("  GET  /data     - 센서 데이터 조회");
+  Serial.println("  POST /control  - 제어 명령 전송");
+  Serial.println("========================");
 }
 
 
@@ -322,10 +339,23 @@ void loop() {
   // HTTP 요청 처리
   server.handleClient();
 
-  //보내는 온습도
+  // 센서 데이터 읽기
   float send_temp = sht31.readTemperature(); 
   float send_hum = sht31.readHumidity();
 
-  //**********************************8
+  // HTTP 서버 상태 주기적 확인 (10초마다)
+  static unsigned long lastStatusCheck = 0;
+  if (millis() - lastStatusCheck > 10000) {
+    Serial.println("=== HTTP 서버 상태 ===");
+    Serial.print("WiFi 상태: ");
+    Serial.println(WiFi.status() == WL_CONNECTED ? "연결됨" : "연결 끊김");
+    Serial.print("IP 주소: ");
+    Serial.println(WiFi.localIP());
+    Serial.print("HTTP 서버: ");
+    Serial.println("http://" + WiFi.localIP().toString() + ":80");
+    Serial.println("====================");
+    lastStatusCheck = millis();
+  }
 
   delay(2000);
+}
