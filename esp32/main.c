@@ -34,6 +34,9 @@ Servo myservo;
 // LED Pin (펌프 상태 표시용)
 #define LED 2 //LED작동 X
 
+// Water Pump Pin (워터펌프 제어용)
+#define WATER_PUMP_PIN 26 // 워터펌프 제어 핀
+
 
 //WIFI Info -> 임의로 핫스팟 사용
 const char* ssid = "A2332";//WIFI SSID
@@ -225,7 +228,26 @@ void  priority_decider(int aqi, float pm_25, float pm_10){
 }
 
 void activatePump(){
-
+  Serial.println("=== 워터펌프 작동 시작 ===");
+  
+  // LED 켜기 (펌프 작동 상태 표시)
+  digitalWrite(LED, HIGH);
+  
+  // 워터펌프 작동 (HIGH = ON, LOW = OFF)
+  digitalWrite(WATER_PUMP_PIN, HIGH);
+  Serial.println("워터펌프 ON - 벌레 제거를 위한 물 분사 시작");
+  
+  // 3초간 물 분사 (벌레 제거 효과)
+  delay(3000);
+  
+  // 워터펌프 정지
+  digitalWrite(WATER_PUMP_PIN, LOW);
+  Serial.println("워터펌프 OFF - 물 분사 완료");
+  
+  // LED 끄기
+  digitalWrite(LED, LOW);
+  
+  Serial.println("=== 워터펌프 작동 완료 ===");
 }
 
 //메시지 수신 및 작동 명령
@@ -280,6 +302,10 @@ void setup() {
 
   pinMode(LED, OUTPUT);
   digitalWrite(LED, LOW); // 초기 OFF
+  
+  // 워터펌프 핀 초기화
+  pinMode(WATER_PUMP_PIN, OUTPUT);
+  digitalWrite(WATER_PUMP_PIN, LOW); // 초기 OFF
 
   Wire.begin(SHT31_SDA_PIN, SHT31_SCL_PIN);
 
