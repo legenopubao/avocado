@@ -5,7 +5,7 @@ import requests
 
 # ==================== change these settings ===============
 settings = {
-    'api_key': '2a4b08ce1569f345464d086e1abce532',  # 제공된 API 키를 사용
+    'api_key': 'OPENWEATHER_API_KEY',  # 제공된 API 키를 사용
     'lat': 'YOUR_LATITUDE',                      # 현재 위치의 위도를 입력하세요.
     'lon': 'YOUR_LONGITUDE'                     # 현재 위치의 경도를 입력하세요.
 }
@@ -62,4 +62,5 @@ def main():
         print("\n❌ 대기질 데이터를 가져오는 데 실패했습니다.")
 
 if __name__ == "__main__":
+
     main()
