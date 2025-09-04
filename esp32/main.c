@@ -1,138 +1,151 @@
-#include <PubSubClient.h> //library for MQTT
-#include <ArduinoJson.h>  //library for Parsing JSON
 #include <WiFi.h>
+#include <Wire.h>
+#include <PubSubClient.h>   // MQTT
+#include <ArduinoJson.h>    // JSON
+#include "Adafruit_SHT31.h" // SHT31
+#include <ESP32Servo.h>     // Servo
+#include <WebServer.h>      // HTTP
 
+// If you actually need this header, keep it. Otherwise you can remove the include.
+// #include "esp_http_pull.h"
 
-//Sensor Libraries
-#include "Adafruit_SHT31.h"
+// ---------- Pins / Hardware ----------
+const int SHT31_SDA_PIN = 21;   // ESP32 default SDA
+const int SHT31_SCL_PIN = 22;   // ESP32 default SCL
+const int SERVO_PIN      = 25;
+const int WATER_PUMP_PIN = 33;  // water pump
 
+// ---------- Globals ----------
+Adafruit_SHT31 sht31;
+Servo           myservo;
+WebServer       server(8000);
 
-//Servo Library
-#include <ESP32Servo.h>
+float pm25 = 0.0f;
+float pm10 = 0.0f;
+int   aqi  = 0;
+int   is_window = 0;   // 0=closed, 1=open
+bool  bug = false;
+bool  hasSHT31 = false;
 
-// HTTP Server
-#include <WebServer.h>
-//HTTP Library
-#include "esp_http_pull.h"
+// ---------- Wi-Fi ----------
+const char* ssid     = "Hahhhh";
+const char* password = "12051205";
 
-//SHT31
-const int SHT31_SDA_PIN = 22;
-const int SHT31_SCL_PIN = 21;
-Adafruit_SHT31 sht31 = Adafruit_SHT31();
-float t;     //온도
-float h;     //습도
-float pm25;  //PM 2.5
-float pm10;  //PM 10
-int aqi;    //AQI
+// ---------- MQTT ----------
+const char* mqttServer   = "broker.hivemq.com";
+const char* mqttUserName = "";
+const char* mqttPwd      = "";
+const char* clientID     = "esp0001";
 
-
-//Servo Pin
-int servoPin = 25;  
-Servo myservo;  
-
-// Water Pump Pin (워터펌프 제어용)
-#define WATER_PUMP_PIN 33 // 워터펌프 제어 핀
-
-
-//WIFI Info -> 임의로 핫스팟 사용
-const char* ssid = "A2332";//WIFI SSID
-const char* password = "01010202";//WIFI PASS
-
-
-//MQTT Info
-const char* mqttServer = "broker.hivemq.com"; //MQTT URL
-const char* mqttUserName = "";  // MQTT username --> 현재는 유저 고유식별 사용X
-const char* mqttPwd = "";       // MQTT password
-const char* clientID = "esp0001"; // client id (기기 식별하기)
-
-
-//MQTT Subscribe 주제들
-const char* topic_pump = "s_window/pump"; 
-const char* topic_aqi = "s_window/aqi";
+const char* topic_pump = "s_window/pump";
+const char* topic_aqi  = "s_window/aqi";
 const char* topic_pm25 = "s_window/pm25";
 const char* topic_pm10 = "s_window/pm10";
 
+WiFiClient       espClient;
+PubSubClient     client(espClient);
 
-//Wifi client, mqtt 연결
-WiFiClient espClient;
-PubSubClient client(espClient);
+// ---------- PumpInfo ------------
+unsigned long pumpStart = 0;
+bool pumpActive = false;
 
-// Web server (HTTP)
-WebServer server(80);
-
-
-//창문 여닫이 여부: 0=닫힘, 1=열림
-int is_window = 1;
-char pump = "OFF";
-// MQTT로 수신한 bug 상태(라즈베리파이→MQTT→ESP32)
-bool bug = false;
-
-//WiFi 연결
-void setup_wifi() {
-  Serial.print("Connecting to WiFi");
-  WiFi.begin(ssid, password);
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
-  }
-  Serial.println("\nWiFi connected!");
-  
-  // WiFi 연결 정보 출력
-  Serial.print("WiFi SSID: ");
-  Serial.println(ssid);
-  Serial.print("IP Address: ");
-  Serial.println(WiFi.localIP());
-  Serial.print("Gateway: ");
-  Serial.println(WiFi.gatewayIP());
-  Serial.print("Subnet: ");
-  Serial.println(WiFi.subnetMask());
-}
-
-//창문 닫기
-void close_window(){
-    /*
-  for (int pos = 0; pos <= 180; pos += 10) {
-      myservo.write(pos);
-      Serial.print("Angle: ");
-      Serial.println(pos);
-      delay(500);
-    }
-      */
-    Serial.println("Close the window");
-}
-
-//창문 열기
-void open_window(){
-  //myservo.write(0); // 원위치
-    Serial.println("Open the window");
-}
-
-// 불쾌지수 계산 (재사용)
+// ---------- Forward Declarations ----------
+void setup_wifi();
+void close_window();
+void open_window();
 float di_calculation(float temp, float hum);
+void handle_http_data();
+void handle_http_control();
+void reconnect();
+void priority_decider(int aqi, float pm_25, float pm_10);
+void activatePump();
+void callback(char* topic, byte* payload, unsigned int length);
+void i2cScan();
 
-// HTTP: /data 핸들러
+  // ---------- Utility ----------
+  float di_calculation(float temp, float hum) {
+    return 0.81f * temp + 0.01f * hum * (0.99f * temp - 14.3f) + 46.3f;
+  }
+
+  // ---------- Wi-Fi ----------
+  void setup_wifi() {
+    Serial.print("Connecting to WiFi");
+    WiFi.mode(WIFI_STA);
+    WiFi.setSleep(false);
+    WiFi.begin(ssid, password);
+    while (WiFi.status() != WL_CONNECTED) {
+      delay(500);
+      Serial.print(".");
+    }
+    Serial.println("\nWiFi connected!");
+    Serial.print("WiFi SSID: ");   Serial.println(ssid);
+    Serial.print("IP Address: ");  Serial.println(WiFi.localIP());
+    Serial.print("Gateway: ");     Serial.println(WiFi.gatewayIP());
+    Serial.print("Subnet: ");      Serial.println(WiFi.subnetMask());
+  }
+
+     // ---------- Window Control ----------
+void open_window() {
+  // 이미 열려있으면 중복 실행 방지
+  if (is_window == 1) {
+    Serial.println("⚠️ Window already open, skipping");
+    return;
+  }
+  
+  Serial.println("🔄 Opening window...");
+  // 서보모터를 0도로 이동 (창문 열기)
+  for (int i = 90; i >= 0; i--) {
+    myservo.write(i);  // 90도 → 0도
+    delay(40);
+  }
+  is_window = 1;  // 루프 밖에서 한 번만 설정
+  Serial.println("✅ Window opened");
+}
+void close_window() {
+  // 이미 닫혀있으면 중복 실행 방지
+  if (is_window == 0) {
+    Serial.println("⚠️ Window already closed, skipping");
+    return;
+  }
+  
+  Serial.println("🔄 Closing window...");
+  // 서보모터를 90도로 이동 (창문 닫기)
+  for (int i = 0; i <= 90; i++) {
+    myservo.write(i);  // 0도 → 90도
+    delay(40);
+  }
+  is_window = 0;  // 루프 밖에서 한 번만 설정
+  Serial.println("✅ Window closed");
+}
+
+// ---------- HTTP Handlers (define ONCE) ----------
 void handle_http_data() {
-  float cur_temp = sht31.readTemperature();
-  float cur_hum = sht31.readHumidity();
-  float di = (!isnan(cur_temp) && !isnan(cur_hum)) ? di_calculation(cur_temp, cur_hum) : 0.0f;
+  float cur_temp = NAN, cur_hum = NAN, di = 0.0f;
+
+  if (hasSHT31) {
+    cur_temp = sht31.readTemperature();
+    cur_hum  = sht31.readHumidity();
+    if (!isnan(cur_temp) && !isnan(cur_hum)) {
+      di = di_calculation(cur_temp, cur_hum);
+    }
+  }
 
   StaticJsonDocument<256> doc;
-  doc["pm25"] = pm25;
-  doc["pm10"] = pm10;
-  doc["temperature"] = isnan(cur_temp) ? 0.0 : cur_temp;
-  doc["humidity"] = isnan(cur_hum) ? 0.0 : cur_hum;
-  doc["di"] = di;
-  doc["bug"] = bug; // MQTT로부터 받은 최신 bug 상태 반영
-  doc["window"] = (is_window == 1);
-  doc["weather"] = "맑음";
-  doc["timestamp"] = millis();
+   doc["pm25"]        = pm25;
+   doc["pm10"]        = pm10;
+   doc["temperature"] = isnan(cur_temp) ? 0.0 : cur_temp;
+   doc["humidity"]    = isnan(cur_hum)  ? 0.0 : cur_hum;
+   doc["di"]          = di;
+   doc["bug"]         = bug;
+   doc["window"]      = (is_window == 1);
+   doc["sensor_control_enabled"] = !bug;  // 벌레 감지 시 센서 제어 비활성화
+   doc["timestamp"]   = millis();
 
   String resp;
   serializeJson(doc, resp);
   server.send(200, "application/json", resp);
 }
 
-// HTTP: /control 핸들러
 void handle_http_control() {
   if (!server.hasArg("plain")) {
     server.send(400, "application/json", "{\"ok\":false,\"error\":\"no body\"}");
@@ -147,215 +160,234 @@ void handle_http_control() {
   }
 
   const char* command = doc["command"] | "";
-  if (strcmp(command, "ON") == 0 || strcmp(command, "window_close") == 0) {
-    close_window();
-    is_window = 0;
-  } else if (strcmp(command, "OFF") == 0 || strcmp(command, "window_open") == 0) {
-    open_window();
-    is_window = 1;
-  } else if (strcmp(command, "window_toggle") == 0) {
-    if (is_window == 1) { close_window(); is_window = 0; } else { open_window(); is_window = 1; }
-  } else if (strcmp(command, "bug_on") == 0) {
-    bug = true;
-    Serial.println("Bug detection ON");
-  } else if (strcmp(command, "bug_off") == 0) {
-    bug = false;
-    Serial.println("Bug detection OFF");
-  }
+  Serial.print("HTTP command: "); Serial.println(command);
+
+     if (strcmp(command, "ON") == 0 || strcmp(command, "window_close") == 0) {
+     close_window(); is_window = 0;
+   } else if (strcmp(command, "OFF") == 0 || strcmp(command, "window_open") == 0) {
+     open_window();  is_window = 1;
+   } else if (strcmp(command, "window_toggle") == 0) {
+     if (is_window == 1) { close_window(); is_window = 0; }
+     else                { open_window();  is_window = 1; }
+   } else if (strcmp(command, "bug_on") == 0) {
+     bug = true;  
+     Serial.println("=== Bug detection ON - Sensor control disabled ===");
+     Serial.println("창문이 벌레 감지로 인해 닫혀있습니다. 센서 제어가 중단됩니다.");
+   } else if (strcmp(command, "bug_off") == 0) {
+     bug = false; 
+     Serial.println("=== Bug detection OFF - Sensor control enabled ===");
+     Serial.println("벌레 감지 해제. 센서 기반 창문 제어가 재개됩니다.");
+     // 벌레 감지 해제 시 우선순위 판단 실행
+     Serial.println("Execute priority decider after bug detection OFF");
+     priority_decider(aqi, pm25, pm10);
+   }
 
   server.send(200, "application/json", "{\"ok\":true}");
 }
 
-//MQTT서버 연결
+// ---------- MQTT ----------
 void reconnect() {
   while (!client.connected()) {
     if (client.connect(clientID, mqttUserName, mqttPwd)) {
       Serial.println("MQTT connected");
-
-      client.subscribe(topic_pump);
-      Serial.println("Subscribed Pump");
-
-      client.subscribe(topic_aqi);
-      Serial.println("Subscribed AQI");
-
-      client.subscribe(topic_pm25);
-      Serial.println("Subscriebd PM 2.5");
-
-      client.subscribe(topic_pm10);
-      Serial.println("Subscriebd PM10");
-    }
-    else {
-      Serial.print("failed, rc=");
-      Serial.print(client.state());
-      Serial.println(" try again in 5 seconds");
-      delay(1000);  // wait 5sec and retry
+      client.subscribe(topic_pump); Serial.println("Subscribed Pump");
+      client.subscribe(topic_aqi);  Serial.println("Subscribed AQI");
+      client.subscribe(topic_pm25); Serial.println("Subscribed PM2.5");
+      client.subscribe(topic_pm10); Serial.println("Subscribed PM10");
+    } else {
+      Serial.print("failed, rc="); Serial.print(client.state());
+      Serial.println(" try again in 1 second");
+      delay(1000);
     }
   }
 }
 
-//불쾌지수 계산
-float di_calculation(float temp, float hum){
-  return 0.81*temp + 0.01*hum * (0.99 * temp - 14.3) + 46.3;
-}
+ void priority_decider(int aqi, float pm_25, float pm_10) {
+   Serial.println("=== Priority decider started ===");
+   
+   // 벌레 감지 상태 확인 - 벌레 감지 중에는 센서 제어 완전 중단
+   if (bug) {
+     Serial.println("🚫 Bug detected - Sensor control DISABLED");
+     Serial.println("창문이 벌레 감지로 인해 닫혀있습니다. 센서 제어가 중단됩니다.");
+     Serial.println("Flutter 앱에서 '벌레 감지 OFF' 버튼을 눌러야 센서 제어가 재개됩니다.");
+     return;
+   }
+   
+   Serial.println("✅ Bug not detected - Sensor control ENABLED");
 
-//우선순위 결정
-void  priority_decider(int aqi, float pm_25, float pm_10){
+   float calc_temp = NAN, calc_hum = NAN;
 
-  float calc_temp = sht31.readTemperature();
-  float calc_hum = sht31.readHumidity();
+   if (hasSHT31) {
+     calc_temp = sht31.readTemperature();
+     calc_hum  = sht31.readHumidity();
+   }
 
-  if (!isnan(calc_temp)) {
-    Serial.print("Temp *C = "); Serial.print(calc_temp); Serial.print("\t");
-  } else { 
-    Serial.println("Failed to read temperature");
-  }
-  
-  if (!isnan(calc_hum)) {
-    Serial.print("Hum. % = "); Serial.println(calc_hum);
-  } else { 
-    Serial.println("Failed to read humidity");
-  }
+   if (!isnan(calc_temp)) { Serial.print("Temp C = "); Serial.print(calc_temp); Serial.print("\t"); }
+   else                   { Serial.println("Temp read failed"); }
 
-  float di_in = di_calculation(calc_temp, calc_hum);
+   if (!isnan(calc_hum))  { Serial.print("Hum %  = ");  Serial.println(calc_hum); }
+   else                   { Serial.println("Hum read failed"); }
 
-  if(pm_25>35 || pm_10>80){
-    close_window(); //미세먼지 나쁨으로 닫기
-    is_window = 0;
+   float di_in = (!isnan(calc_temp) && !isnan(calc_hum)) ? di_calculation(calc_temp, calc_hum) : 0.0f;
+   Serial.print("DI: "); Serial.println(di_in);
+   Serial.print("PM2.5: "); Serial.print(pm_25); Serial.print(", PM10: "); Serial.println(pm_10);
 
-  }else if(di_in<76) {
-    close_window(); //불쾌지수 76이하(쾌적)이므로 닫기
-    is_window = 0;
+   if (pm_25 > 35 || pm_10 > 80) { 
+     Serial.println("PM2.5 or PM10 is bad -> close the window");
+     close_window(); is_window = 0; 
+   }
+   else if (di_in < 76) { 
+     Serial.println("DI is comfortable -> close the window");
+     close_window(); is_window = 0; 
+   }
+   else { 
+     Serial.println("Ventilation needed -> open the window");
+     open_window(); is_window = 1;  
+   }
+   
+   Serial.println("Priority decider done");
+ }
 
-  }else{
-    open_window(); //벌레없고, 미세먼지 안좋고, 불쾌지수 높으므로 열기. 
-    is_window = 1;
-  }
-
-}
-
-void activatePump(){
-  Serial.println("=== 워터펌프 작동 시작 ===");
-  // 워터펌프 작동 (HIGH = ON, LOW = OFF)
+void activatePump() {
   digitalWrite(WATER_PUMP_PIN, HIGH);
-  Serial.println("워터펌프 ON - 벌레 제거를 위한 물 분사 시작");
-  // 3초간 물 분사 (벌레 제거 효과)
-  delay(3000);
-  // 워터펌프 정지
-  digitalWrite(WATER_PUMP_PIN, LOW);
-  Serial.println("워터펌프 OFF - 물 분사 완료");
-  Serial.println("=== 워터펌프 작동 완료 ===");
+  pumpStart = millis();
+  pumpActive = true;
+  Serial.println("Water pump ON - spraying");
 }
 
-//메시지 수신 및 작동 명령
+void handlePump() {
+  if (pumpActive && millis() - pumpStart >= 3000) {
+    digitalWrite(WATER_PUMP_PIN, LOW);
+    pumpActive = false;
+    Serial.println("Water pump OFF - done");
+  }
+}
 void callback(char* topic, byte* payload, unsigned int length) {
-  Serial.print("Message arrived in topic: ");
-  Serial.println(topic);
+  Serial.print("Message topic: "); Serial.println(topic);
 
-  String data = "";
-  for (int i = 0; i < length; i++) {
-    data += (char)payload[i];
-  }
+  String data;
+  data.reserve(length);
+  for (unsigned int i = 0; i < length; i++) data += (char)payload[i];
   data.trim();
-  Serial.print("Message: ");
-  Serial.println(data);
+  Serial.print("Message: "); Serial.println(data);
 
-  if (strcmp(topic, "s_window/aqi") == 0) { //AQI 정보 받기
-    aqi = data.toInt();
-    Serial.print("Updated AQI: "); Serial.println(aqi);
-  }
-  else if (strcmp(topic, "s_window/pm25") == 0) {  //PM2.5 정보 받기
-    pm25 = data.toFloat();
-    Serial.print("Updated PM2.5: "); Serial.println(pm25);
-  }
-  else if (strcmp(topic, "s_window/pm10") == 0) {  //PM10 정보 받기
-    pm10 = data.toFloat();
-    Serial.print("Updated PM10: "); Serial.println(pm10);
-  }
-  else if (strcmp(topic, "s_window/pump") == 0) {  //Pump 작동 여부
+  if      (strcmp(topic, "s_window/aqi")  == 0) { aqi  = data.toInt();   Serial.print("Updated AQI: ");  Serial.println(aqi);  }
+  else if (strcmp(topic, "s_window/pm25") == 0) { pm25 = data.toFloat(); Serial.print("Updated PM2.5: ");Serial.println(pm25); }
+  else if (strcmp(topic, "s_window/pm10") == 0) { pm10 = data.toFloat(); Serial.print("Updated PM10: "); Serial.println(pm10); }
+     else if (strcmp(topic, "s_window/pump") == 0) {
+     // 중복 메시지 처리 방지
+     static String lastPumpState = "";
+     String currentPumpState = String(data);
+     
+     if (lastPumpState == currentPumpState) {
+       Serial.println("🔄 Duplicate pump message ignored: " + currentPumpState);
+       return;
+     }
+     
+     lastPumpState = currentPumpState;
+     Serial.println("📨 New pump message received: " + currentPumpState);
+     
+     if (data.equals("ON")) {
+       Serial.println("=== MQTT: Bug detected, close window and activate pump ===");
+       is_window = 0; 
+       close_window();     // 창문 닫기
+       activatePump(); 
+       bug = true;
+       Serial.println("Bug detected: true - Sensor control DISABLED");
+       Serial.println("창문이 벌레 감지로 인해 닫혀있습니다. 센서 제어가 중단됩니다.");
+     } else if (data.equals("OFF")) {
+       Serial.println("=== MQTT: Bug detection OFF ===");
+       bug = false; 
+       Serial.println("Bug detected: false - Sensor control ENABLED");
+       Serial.println("벌레 감지 해제. 센서 기반 창문 제어가 재개됩니다.");
+       
+       // 워터펌프 완료 후 5초 대기 (벌레 완전 제거 확인)
+       Serial.println("Wait 5 seconds and run priority decider");
+       delay(5000);
+       
+       Serial.println("Execute priority decider");
+       priority_decider(aqi, pm25, pm10);
+     }
+   }
+}
 
-    if (data.equals("ON")) {  //벌레 일정 수 이상 감지
-      Serial.println("Pump ON -> Servo 동작 & 워터펌프 작동");
-      is_window = 0;
-      close_window();
-      activatePump();
-      bug = true; // bug 감지
-    } 
-    else if (data.equals("OFF")) {  //벌레x, 센서로 여닫이 판단
-      Serial.println("Pump OFF -> 우선순위 판단 실행");
-      bug = false; // bug 해제
-      priority_decider(aqi, pm25, pm10);
+// ---------- Optional: I2C scanner ----------
+void i2cScan() {
+  Serial.println("I2C scan start");
+  for (uint8_t addr = 1; addr < 127; addr++) {
+    Wire.beginTransmission(addr);
+    if (Wire.endTransmission() == 0) {
+      Serial.print("Found device at 0x");
+      if (addr < 16) Serial.print("0");
+      Serial.println(addr, HEX);
+      delay(2);
     }
   }
+  Serial.println("I2C scan done");
 }
 
-
-
+// ---------- Setup / Loop ----------
 void setup() {
-  Serial.begin(115200);
+  Serial.begin(115200, SERIAL_8N1);
+  delay(300);
 
-  //Servo Setup
-  myservo.attach(servoPin, 500, 2500);
-  
-  // 워터펌프 핀 초기화
+  // Servo
+  myservo.attach(SERVO_PIN, 500, 2500);
+
+  // Water pump
   pinMode(WATER_PUMP_PIN, OUTPUT);
-  digitalWrite(WATER_PUMP_PIN, LOW); // 초기 OFF
+  digitalWrite(WATER_PUMP_PIN, LOW);
 
+  // I2C
   Wire.begin(SHT31_SDA_PIN, SHT31_SCL_PIN);
+  Wire.setClock(100000); // 100kHz for stability
 
   setup_wifi();
 
-  client.setServer(mqttServer, 1883); //MQTT Setup
-  client.setCallback(callback); //MQTT 수신 함수 부르기
+  client.setServer(mqttServer, 1883);
+  client.setCallback(callback);
 
-  if (!sht31.begin(0x44)) {  //SHT 센서 연결 오류 시
-    Serial.println("Couldn't find SHT31");
-    while (1) delay(1);
+  // Try SHT31 on both common addresses
+  hasSHT31 = sht31.begin(0x44);
+  if (!hasSHT31) {
+    Serial.println("SHT31 @0x44 not found, trying 0x45...");
+    hasSHT31 = sht31.begin(0x45);
+  }
+  if (!hasSHT31) {
+    Serial.println("WARN: SHT31 not found. Continuing without sensor.");
+    // i2cScan(); // uncomment if you want to scan the bus once
   }
 
-  // HTTP 서버 라우트 등록
-  server.on("/data", HTTP_GET, handle_http_data);
+  // HTTP routes
+  server.on("/",        HTTP_GET,  [](){ server.send(200, "text/plain", "ok"); });
+  server.on("/data",    HTTP_GET,  handle_http_data);
   server.on("/control", HTTP_POST, handle_http_control);
   server.begin();
-  
-  // HTTP 서버 상태 출력
-  Serial.println("HTTP 서버 시작됨!");
-  Serial.print("HTTP 서버 주소: http://");
-  Serial.print(WiFi.localIP());
-  Serial.println(":80");
-  Serial.println("사용 가능한 엔드포인트:");
-  Serial.println("  GET  /data     - 센서 데이터 조회");
-  Serial.println("  POST /control  - 제어 명령 전송");
+
+  Serial.println("HTTP server started!");
+  Serial.print("HTTP URL: http://"); Serial.print(WiFi.localIP()); Serial.println(":8000");
+  Serial.println("Endpoints: /, /data, /control");
   Serial.println("========================");
 }
 
-
-
 void loop() {
-  if (!client.connected()) {  //연결 계속 재시도
-    reconnect(); 
-  }
-  client.loop(); //MQTT 수신 유지/반복
+  if (!client.connected()) reconnect();
+  client.loop();
 
-  // HTTP 요청 처리
   server.handleClient();
 
-  // 센서 데이터 읽기
-  float send_temp = sht31.readTemperature(); 
-  float send_hum = sht31.readHumidity();
+  handlePump();
 
-  // HTTP 서버 상태 주기적 확인 (10초마다)
-  static unsigned long lastStatusCheck = 0;
-  if (millis() - lastStatusCheck > 10000) {
-    Serial.println("=== HTTP 서버 상태 ===");
-    Serial.print("WiFi 상태: ");
-    Serial.println(WiFi.status() == WL_CONNECTED ? "연결됨" : "연결 끊김");
-    Serial.print("IP 주소: ");
-    Serial.println(WiFi.localIP());
-    Serial.print("HTTP 서버: ");
-    Serial.println("http://" + WiFi.localIP().toString() + ":80");
-    Serial.println("====================");
-    lastStatusCheck = millis();
+  // Optional periodic status
+  static unsigned long lastStatus = 0;
+  if (millis() - lastStatus > 10000) {
+    Serial.println("=== HTTP server status ===");
+    Serial.print("WiFi: ");  Serial.println(WiFi.status() == WL_CONNECTED ? "connected" : "disconnected");
+    Serial.print("IP: ");    Serial.println(WiFi.localIP());
+    Serial.print("HTTP: ");  Serial.println("http://" + WiFi.localIP().toString() + ":8000");
+    Serial.println("========================");
+    lastStatus = millis();
   }
 
-  delay(2000);
+  delay(2); // keep loop responsive
 }
