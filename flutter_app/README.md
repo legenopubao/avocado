@@ -2,6 +2,9 @@
 
 ESP32와 라즈베리파이를 연동한 실시간 공기 질 모니터링 및 자동 창문 제어 Flutter 앱입니다.
 
+# 앱 배포
+안드로이드(원스토어): https://m.onestore.co.kr/v2/ko-kr/app/0001002169
+
 ## 🚀 주요 기능
 
 ### 📊 실시간 공기질 모니터링
@@ -227,5 +230,6 @@ lib/
 프로젝트 링크: [https://github.com/legenopubao/avocado](https://github.com/legenopubao/avocado)
 
 ---
+
 
 **Airocado** - 더 건강한 실내 환경을 위한 스마트 창문 솔루션 🌱
